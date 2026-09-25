@@ -87,13 +87,31 @@ export default {
 						<RouterLink class="nav-link rounded-3" to="/clients"
 						            active-class="active">
 							<i class="bi bi-people me-2"></i>
-							<LocaleText t="Clients"></LocaleText>
+							<LocaleText t="Users"></LocaleText>
 						</RouterLink>
 					</li>
 					<li class="nav-item">
-						<RouterLink class="nav-link rounded-3" to="/commercial" active-class="active">
-							<i class="bi bi-diagram-3 me-2"></i>
-							<LocaleText t="Subscriptions & Nodes"></LocaleText>
+						<RouterLink class="nav-link rounded-3" to="/commercial/nodes" active-class="active">
+							<i class="bi bi-hdd-rack me-2"></i>
+							<LocaleText t="Nodes"></LocaleText>
+						</RouterLink>
+					</li>
+					<li class="nav-item">
+						<RouterLink class="nav-link rounded-3" to="/commercial/node-groups" active-class="active">
+							<i class="bi bi-geo-alt me-2"></i>
+							<LocaleText t="Node Groups"></LocaleText>
+						</RouterLink>
+					</li>
+					<li class="nav-item">
+						<RouterLink class="nav-link rounded-3" to="/commercial/packages" active-class="active">
+							<i class="bi bi-box-seam me-2"></i>
+							<LocaleText t="Packages"></LocaleText>
+						</RouterLink>
+					</li>
+					<li class="nav-item">
+						<RouterLink class="nav-link rounded-3" to="/commercial/subscriptions" active-class="active">
+							<i class="bi bi-credit-card me-2"></i>
+							<LocaleText t="Subscriptions"></LocaleText>
 						</RouterLink>
 					</li>
 					<li class="nav-item">

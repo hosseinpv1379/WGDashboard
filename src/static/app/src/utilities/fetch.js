@@ -34,49 +34,51 @@ export const getUrl = (url) => {
 	return `./.${url}`;
 }
 
+const parseResponse = async (response) => {
+	const store = DashboardConfigurationStore();
+	let payload = null;
+	try {
+		payload = await response.json();
+	} catch (_) {
+		// Some proxy and infrastructure errors do not return JSON.
+	}
+	if (response.ok) return payload;
+
+	const message = payload?.message || response.statusText || 'Request failed';
+	if (response.status === 401) {
+		store.newMessage('WGDashboard', 'Sign in session ended, please sign in again', 'warning');
+		await router.push({path: '/signin'});
+	} else {
+		store.newMessage('Server', message, 'danger');
+	}
+	throw new Error(message);
+}
+
 export const fetchGet = async (url, params=undefined, callback=undefined) => {
 	const urlSearchParams = new URLSearchParams(params);
-	await fetch(`${getUrl(url)}?${urlSearchParams.toString()}`, {
-		headers: getHeaders()
-	})
-		.then((x) => {
-			const store = DashboardConfigurationStore();
-			if (!x.ok){
-				if (x.status !== 200){
-					if (x.status === 401){
-						store.newMessage("WGDashboard", "Sign in session ended, please sign in again", "warning")
-					}
-					throw new Error(x.statusText)
-				}
-			}else{
-				return x.json()
-			}
-		})
-		.then(x => callback ? callback(x) : undefined).catch(x => {
-			console.log("Error:", x)
-			router.push({path: '/signin'})
-	})
+	try {
+		const response = await fetch(`${getUrl(url)}?${urlSearchParams.toString()}`, {
+			headers: getHeaders()
+		});
+		const payload = await parseResponse(response);
+		return callback ? callback(payload) : payload;
+	} catch (error) {
+		console.log('Error:', error);
+		return undefined;
+	}
 }
 
 export const fetchPost = async (url, body, callback) => {
-	await fetch(`${getUrl(url)}`, {
-		headers: getHeaders(),
-		method: "POST",
-		body: JSON.stringify(body)
-	}).then((x) => {
-		const store = DashboardConfigurationStore();
-		if (!x.ok){
-			if (x.status !== 200){
-				if (x.status === 401){
-					store.newMessage("WGDashboard", "Sign in session ended, please sign in again", "warning")
-				}
-				throw new Error(x.statusText)
-			}
-		}else{
-			return x.json()
-		}
-	}).then(x => callback ? callback(x) : undefined).catch(x => {
-		console.log("Error:", x)
-		router.push({path: '/signin'})
-	})
+	try {
+		const response = await fetch(`${getUrl(url)}`, {
+			headers: getHeaders(),
+			method: 'POST',
+			body: JSON.stringify(body)
+		});
+		const payload = await parseResponse(response);
+		return callback ? callback(payload) : payload;
+	} catch (error) {
+		console.log('Error:', error);
+		return undefined;
+	}
 }

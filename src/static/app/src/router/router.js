@@ -106,11 +106,11 @@ const router = createRouter({
 					}
 				},
 				{
-					name: "Clients",
+					name: "Users",
 					path: 'clients',
 					component: () => import("@/views/clients.vue"),
 					meta: {
-						title: "Clients"
+						title: "Users"
 					},
 					children: [
 						{
@@ -118,18 +118,45 @@ const router = createRouter({
 							path: ':id',
 							component: () => import('@/components/clientComponents/clientViewer.vue'),
 							meta: {
-								title: "Clients"
+								title: "Users"
 							},
 						}
 					]
 				},
 				{
-					name: "Commercial Subscriptions",
+					name: "Commercial Panel",
 					path: 'commercial',
-					component: () => import("@/views/commercial.vue"),
+					component: () => import("@/views/commercial/commercialLayout.vue"),
+					redirect: '/commercial/subscriptions',
 					meta: {
-						title: "Commercial Subscriptions"
-					}
+						title: "Commercial Panel"
+					},
+					children: [
+						{
+							name: "Nodes",
+							path: 'nodes',
+							component: () => import("@/views/commercial/nodes.vue"),
+							meta: {title: "Nodes"}
+						},
+						{
+							name: "Node Groups",
+							path: 'node-groups',
+							component: () => import("@/views/commercial/nodeGroups.vue"),
+							meta: {title: "Node Groups"}
+						},
+						{
+							name: "Packages",
+							path: 'packages',
+							component: () => import("@/views/commercial/packages.vue"),
+							meta: {title: "Packages"}
+						},
+						{
+							name: "Subscriptions",
+							path: 'subscriptions',
+							component: () => import("@/views/commercial/subscriptions.vue"),
+							meta: {title: "Subscriptions"}
+						}
+					]
 				},
                 {
                     name: "Webhooks",

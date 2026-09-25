@@ -8,6 +8,7 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 import sqlalchemy as db
 from cryptography.fernet import Fernet, InvalidToken
@@ -45,6 +46,50 @@ class CommercialSubscriptions:
             db.Column("RevokedAt", db.DateTime),
         )
 
+        self.node_groups = db.Table(
+            "CommercialNodeGroups", self.metadata,
+            db.Column("NodeGroupID", db.String(36), primary_key=True),
+            db.Column("Name", db.String(255), nullable=False, unique=True),
+            db.Column("Description", db.Text, nullable=False, server_default=""),
+            db.Column("Status", db.String(32), nullable=False, server_default="active", index=True),
+            db.Column("CreatedAt", db.DateTime, nullable=False, server_default=db.func.now()),
+            db.Column("UpdatedAt", db.DateTime, nullable=False, server_default=db.func.now()),
+        )
+
+        self.node_group_members = db.Table(
+            "CommercialNodeGroupMembers", self.metadata,
+            db.Column(
+                "NodeGroupID", db.String(36),
+                db.ForeignKey("CommercialNodeGroups.NodeGroupID", ondelete="CASCADE"),
+                primary_key=True,
+            ),
+            db.Column(
+                "NodeID", db.String(36),
+                db.ForeignKey("CommercialNodes.NodeID", ondelete="RESTRICT"),
+                primary_key=True,
+            ),
+            db.Column("CreatedAt", db.DateTime, nullable=False, server_default=db.func.now()),
+        )
+
+        self.packages = db.Table(
+            "CommercialPackages", self.metadata,
+            db.Column("PackageID", db.String(36), primary_key=True),
+            db.Column(
+                "NodeGroupID", db.String(36),
+                db.ForeignKey("CommercialNodeGroups.NodeGroupID", ondelete="RESTRICT"),
+                nullable=False, index=True,
+            ),
+            db.Column("Name", db.String(255), nullable=False),
+            db.Column("Description", db.Text, nullable=False, server_default=""),
+            db.Column("QuotaBytes", db.BigInteger, nullable=False, server_default="0"),
+            db.Column("DurationDays", db.Integer, nullable=False, server_default="0"),
+            db.Column("Price", db.Numeric(18, 2), nullable=False, server_default="0"),
+            db.Column("Currency", db.String(16), nullable=False, server_default="IRT"),
+            db.Column("Status", db.String(32), nullable=False, server_default="active", index=True),
+            db.Column("CreatedAt", db.DateTime, nullable=False, server_default=db.func.now()),
+            db.Column("UpdatedAt", db.DateTime, nullable=False, server_default=db.func.now()),
+        )
+
         self.subscriptions = db.Table(
             "CommercialSubscriptions", self.metadata,
             db.Column("SubscriptionID", db.String(36), primary_key=True),
@@ -59,6 +104,31 @@ class CommercialSubscriptions:
             db.Column("CreatedAt", db.DateTime, nullable=False, server_default=db.func.now()),
             db.Column("UpdatedAt", db.DateTime, nullable=False, server_default=db.func.now()),
             db.Column("DisabledAt", db.DateTime),
+        )
+
+        # Package values are copied here at sale time. Existing subscriptions
+        # therefore keep their original commercial terms when a package is
+        # edited later.
+        self.subscription_plans = db.Table(
+            "CommercialSubscriptionPlans", self.metadata,
+            db.Column(
+                "SubscriptionID", db.String(36),
+                db.ForeignKey("CommercialSubscriptions.SubscriptionID", ondelete="CASCADE"),
+                primary_key=True,
+            ),
+            db.Column(
+                "PackageID", db.String(36),
+                db.ForeignKey("CommercialPackages.PackageID", ondelete="RESTRICT"),
+                nullable=False, index=True,
+            ),
+            db.Column("PackageName", db.String(255), nullable=False),
+            db.Column("NodeGroupID", db.String(36), nullable=False, index=True),
+            db.Column("NodeGroupName", db.String(255), nullable=False),
+            db.Column("QuotaBytes", db.BigInteger, nullable=False),
+            db.Column("DurationDays", db.Integer, nullable=False),
+            db.Column("Price", db.Numeric(18, 2), nullable=False),
+            db.Column("Currency", db.String(16), nullable=False),
+            db.Column("CreatedAt", db.DateTime, nullable=False, server_default=db.func.now()),
         )
 
         self.subscription_peers = db.Table(
@@ -134,7 +204,36 @@ class CommercialSubscriptions:
         for key, value in list(result.items()):
             if isinstance(value, datetime):
                 result[key] = value.strftime("%Y-%m-%d %H:%M:%S")
+            elif isinstance(value, Decimal):
+                result[key] = float(value)
         return result
+
+    @staticmethod
+    def _normalise_status(value, allowed=("active", "disabled")):
+        status = str(value or "active").strip().lower()
+        if status not in allowed:
+            raise ValueError(f"Status must be one of: {', '.join(allowed)}")
+        return status
+
+    @staticmethod
+    def _quota_bytes(quota_gb):
+        try:
+            quota_gb = Decimal(str(quota_gb or 0))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError("Quota must be a valid number") from exc
+        if quota_gb < 0:
+            raise ValueError("Quota cannot be negative")
+        return int(quota_gb * 1024 * 1024 * 1024)
+
+    @staticmethod
+    def _price(value):
+        try:
+            price = Decimal(str(value or 0)).quantize(Decimal("0.01"))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError("Price must be a valid number") from exc
+        if price < 0:
+            raise ValueError("Price cannot be negative")
+        return price
 
     def _load_encryption_key(self):
         configured = os.getenv("WGD_SUBSCRIPTION_ENCRYPTION_KEY", "").strip()
@@ -222,6 +321,270 @@ class CommercialSubscriptions:
             )
         return result.rowcount == 1
 
+    def _validated_nodes(self, conn, node_ids, require_one=True):
+        if not isinstance(node_ids, list):
+            raise ValueError("Node IDs must be a list")
+        unique_ids = list(dict.fromkeys(str(node_id).strip() for node_id in node_ids if node_id))
+        if require_one and not unique_ids:
+            raise ValueError("At least one node is required")
+        nodes = []
+        for node_id in unique_ids:
+            node = conn.execute(
+                self.nodes.select().where(
+                    db.and_(self.nodes.c.NodeID == node_id, self.nodes.c.RevokedAt.is_(None))
+                )
+            ).mappings().fetchone()
+            if not node:
+                raise ValueError(f"Node does not exist: {node_id}")
+            nodes.append(node)
+        return nodes
+
+    def create_node_group(self, name, node_ids, description="", status="active"):
+        name = str(name or "").strip()
+        if not name:
+            raise ValueError("Node group name is required")
+        status = self._normalise_status(status)
+        group_id = str(uuid.uuid4())
+        with self.engine.begin() as conn:
+            duplicate = conn.execute(
+                db.select(self.node_groups.c.NodeGroupID).where(
+                    db.func.lower(self.node_groups.c.Name) == name.lower()
+                )
+            ).fetchone()
+            if duplicate:
+                raise ValueError("A node group with this name already exists")
+            nodes = self._validated_nodes(conn, node_ids)
+            conn.execute(self.node_groups.insert().values(
+                NodeGroupID=group_id,
+                Name=name,
+                Description=str(description or "").strip(),
+                Status=status,
+                UpdatedAt=datetime.now(),
+            ))
+            conn.execute(self.node_group_members.insert(), [
+                {"NodeGroupID": group_id, "NodeID": node["NodeID"]} for node in nodes
+            ])
+        return {"node_group_id": group_id}
+
+    def list_node_groups(self):
+        now = datetime.now()
+        with self.engine.connect() as conn:
+            groups = conn.execute(
+                self.node_groups.select().order_by(self.node_groups.c.CreatedAt.desc())
+            ).mappings().fetchall()
+            result = []
+            for group in groups:
+                item = self._row(group)
+                members = conn.execute(
+                    db.select(self.nodes).select_from(
+                        self.node_group_members.join(
+                            self.nodes,
+                            self.node_group_members.c.NodeID == self.nodes.c.NodeID,
+                        )
+                    ).where(
+                        db.and_(
+                            self.node_group_members.c.NodeGroupID == group["NodeGroupID"],
+                            self.nodes.c.RevokedAt.is_(None),
+                        )
+                    ).order_by(self.nodes.c.Name)
+                ).mappings().fetchall()
+                item["Nodes"] = []
+                for member in members:
+                    member_item = self._row(member)
+                    last_seen = member.get("LastSeenAt")
+                    member_item["Status"] = (
+                        "online" if last_seen and
+                        (now - last_seen).total_seconds() <= self.NODE_OFFLINE_AFTER_SECONDS
+                        else "offline"
+                    )
+                    member_item.pop("TokenHash", None)
+                    item["Nodes"].append(member_item)
+                item["NodeIDs"] = [member["NodeID"] for member in members]
+                item["NodeCount"] = len(members)
+                result.append(item)
+        return result
+
+    def update_node_group(self, group_id, data):
+        values = {"UpdatedAt": datetime.now()}
+        with self.engine.begin() as conn:
+            existing = conn.execute(
+                self.node_groups.select().where(self.node_groups.c.NodeGroupID == group_id)
+            ).mappings().fetchone()
+            if not existing:
+                return False
+            if "name" in data:
+                name = str(data.get("name") or "").strip()
+                if not name:
+                    raise ValueError("Node group name is required")
+                duplicate = conn.execute(
+                    db.select(self.node_groups.c.NodeGroupID).where(
+                        db.and_(
+                            db.func.lower(self.node_groups.c.Name) == name.lower(),
+                            self.node_groups.c.NodeGroupID != group_id,
+                        )
+                    )
+                ).fetchone()
+                if duplicate:
+                    raise ValueError("A node group with this name already exists")
+                values["Name"] = name
+            if "description" in data:
+                values["Description"] = str(data.get("description") or "").strip()
+            if "status" in data:
+                values["Status"] = self._normalise_status(data.get("status"))
+            if "node_ids" in data:
+                nodes = self._validated_nodes(conn, data.get("node_ids"))
+                conn.execute(
+                    self.node_group_members.delete().where(
+                        self.node_group_members.c.NodeGroupID == group_id
+                    )
+                )
+                conn.execute(self.node_group_members.insert(), [
+                    {"NodeGroupID": group_id, "NodeID": node["NodeID"]} for node in nodes
+                ])
+            conn.execute(
+                self.node_groups.update().values(**values).where(
+                    self.node_groups.c.NodeGroupID == group_id
+                )
+            )
+        return True
+
+    def create_package(self, name, node_group_id, quota_gb, duration_days, price,
+                       currency="IRT", description="", status="active"):
+        name = str(name or "").strip()
+        if not name:
+            raise ValueError("Package name is required")
+        try:
+            duration_days = int(duration_days or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Duration must be a whole number of days") from exc
+        if duration_days < 0:
+            raise ValueError("Duration cannot be negative")
+        currency = str(currency or "IRT").strip().upper()
+        if not re.fullmatch(r"[A-Z0-9_-]{2,16}", currency):
+            raise ValueError("Currency code is invalid")
+        status = self._normalise_status(status)
+        package_id = str(uuid.uuid4())
+        with self.engine.begin() as conn:
+            group = conn.execute(
+                self.node_groups.select().where(
+                    self.node_groups.c.NodeGroupID == str(node_group_id or "")
+                )
+            ).mappings().fetchone()
+            if not group:
+                raise ValueError("Node group does not exist")
+            member_count = conn.execute(
+                db.select(db.func.count()).select_from(self.node_group_members).where(
+                    self.node_group_members.c.NodeGroupID == group["NodeGroupID"]
+                )
+            ).scalar_one()
+            if member_count < 1:
+                raise ValueError("Node group must contain at least one node")
+            conn.execute(self.packages.insert().values(
+                PackageID=package_id,
+                NodeGroupID=group["NodeGroupID"],
+                Name=name,
+                Description=str(description or "").strip(),
+                QuotaBytes=self._quota_bytes(quota_gb),
+                DurationDays=duration_days,
+                Price=self._price(price),
+                Currency=currency,
+                Status=status,
+                UpdatedAt=datetime.now(),
+            ))
+        return {"package_id": package_id}
+
+    def list_packages(self, active_only=False):
+        query = db.select(
+            self.packages,
+            self.node_groups.c.Name.label("NodeGroupName"),
+            self.node_groups.c.Status.label("NodeGroupStatus"),
+            db.func.count(self.node_group_members.c.NodeID).label("NodeCount"),
+        ).select_from(
+            self.packages.join(
+                self.node_groups,
+                self.packages.c.NodeGroupID == self.node_groups.c.NodeGroupID,
+            ).outerjoin(
+                self.node_group_members,
+                self.packages.c.NodeGroupID == self.node_group_members.c.NodeGroupID,
+            )
+        ).group_by(
+            *self.packages.c,
+            self.node_groups.c.Name,
+            self.node_groups.c.Status,
+        ).order_by(self.packages.c.CreatedAt.desc())
+        if active_only:
+            query = query.where(
+                db.and_(
+                    self.packages.c.Status == "active",
+                    self.node_groups.c.Status == "active",
+                )
+            )
+        with self.engine.connect() as conn:
+            rows = conn.execute(query).mappings().fetchall()
+        result = []
+        for row in rows:
+            item = self._row(row)
+            item["QuotaGB"] = round(int(row["QuotaBytes"] or 0) / (1024 ** 3), 4)
+            result.append(item)
+        return result
+
+    def update_package(self, package_id, data):
+        values = {"UpdatedAt": datetime.now()}
+        with self.engine.begin() as conn:
+            existing = conn.execute(
+                self.packages.select().where(self.packages.c.PackageID == package_id)
+            ).mappings().fetchone()
+            if not existing:
+                return False
+            if "name" in data:
+                name = str(data.get("name") or "").strip()
+                if not name:
+                    raise ValueError("Package name is required")
+                values["Name"] = name
+            if "description" in data:
+                values["Description"] = str(data.get("description") or "").strip()
+            if "quota_gb" in data:
+                values["QuotaBytes"] = self._quota_bytes(data.get("quota_gb"))
+            if "duration_days" in data:
+                try:
+                    duration_days = int(data.get("duration_days") or 0)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("Duration must be a whole number of days") from exc
+                if duration_days < 0:
+                    raise ValueError("Duration cannot be negative")
+                values["DurationDays"] = duration_days
+            if "price" in data:
+                values["Price"] = self._price(data.get("price"))
+            if "currency" in data:
+                currency = str(data.get("currency") or "").strip().upper()
+                if not re.fullmatch(r"[A-Z0-9_-]{2,16}", currency):
+                    raise ValueError("Currency code is invalid")
+                values["Currency"] = currency
+            if "status" in data:
+                values["Status"] = self._normalise_status(data.get("status"))
+            if "node_group_id" in data:
+                group = conn.execute(
+                    self.node_groups.select().where(
+                        self.node_groups.c.NodeGroupID == str(data.get("node_group_id") or "")
+                    )
+                ).mappings().fetchone()
+                if not group:
+                    raise ValueError("Node group does not exist")
+                member_count = conn.execute(
+                    db.select(db.func.count()).select_from(self.node_group_members).where(
+                        self.node_group_members.c.NodeGroupID == group["NodeGroupID"]
+                    )
+                ).scalar_one()
+                if member_count < 1:
+                    raise ValueError("Node group must contain at least one node")
+                values["NodeGroupID"] = group["NodeGroupID"]
+            conn.execute(
+                self.packages.update().values(**values).where(
+                    self.packages.c.PackageID == package_id
+                )
+            )
+        return True
+
     def authenticate_node(self, token):
         if not token:
             return None
@@ -252,12 +615,11 @@ class CommercialSubscriptions:
         if not str(name or "").strip():
             raise ValueError("Subscription name is required")
         try:
-            quota_gb = float(quota_gb or 0)
             max_peers = int(max_peers or 1)
         except (TypeError, ValueError) as exc:
-            raise ValueError("Quota and maximum peers must be valid numbers") from exc
-        if quota_gb < 0 or max_peers < 1:
-            raise ValueError("Quota cannot be negative and maximum peers must be at least one")
+            raise ValueError("Maximum peers must be a valid number") from exc
+        if max_peers < 1:
+            raise ValueError("Maximum peers must be at least one")
 
         expires_at = ParseOptionalDateTime(expires_at)
         subscription_id = str(uuid.uuid4())
@@ -268,7 +630,7 @@ class CommercialSubscriptions:
                 ClientID=client_id,
                 Name=str(name).strip(),
                 Status="active",
-                QuotaBytes=int(quota_gb * 1024 * 1024 * 1024),
+                QuotaBytes=self._quota_bytes(quota_gb),
                 UsedBytes=0,
                 ExpiresAt=expires_at,
                 MaxPeers=max_peers,
@@ -281,6 +643,141 @@ class CommercialSubscriptions:
             "subscription_path": f"/sub/{subscription_id}.{token}",
         }
 
+    def create_subscription_from_package(self, client_id, package_id, name=None):
+        if not client_id:
+            raise ValueError("Client is required")
+        now = datetime.now()
+        subscription_id = str(uuid.uuid4())
+        token = secrets.token_urlsafe(36)
+        created_jobs = []
+
+        with self.engine.begin() as conn:
+            package = conn.execute(
+                db.select(
+                    self.packages,
+                    self.node_groups.c.Name.label("NodeGroupName"),
+                    self.node_groups.c.Status.label("NodeGroupStatus"),
+                ).select_from(
+                    self.packages.join(
+                        self.node_groups,
+                        self.packages.c.NodeGroupID == self.node_groups.c.NodeGroupID,
+                    )
+                ).where(self.packages.c.PackageID == str(package_id or ""))
+            ).mappings().fetchone()
+            if not package:
+                raise ValueError("Package does not exist")
+            if package["Status"] != "active":
+                raise ValueError("Package is disabled")
+            if package["NodeGroupStatus"] != "active":
+                raise ValueError("Package node group is disabled")
+
+            nodes = conn.execute(
+                db.select(self.nodes).select_from(
+                    self.node_group_members.join(
+                        self.nodes,
+                        self.node_group_members.c.NodeID == self.nodes.c.NodeID,
+                    )
+                ).where(
+                    db.and_(
+                        self.node_group_members.c.NodeGroupID == package["NodeGroupID"],
+                        self.nodes.c.RevokedAt.is_(None),
+                    )
+                ).order_by(self.nodes.c.Name)
+            ).mappings().fetchall()
+            if not nodes:
+                raise ValueError("Package node group has no available nodes")
+
+            for node in nodes:
+                node_peer_count = conn.execute(
+                    db.select(db.func.count()).select_from(self.subscription_peers).where(
+                        db.and_(
+                            self.subscription_peers.c.NodeID == node["NodeID"],
+                            self.subscription_peers.c.Status != "deleted",
+                        )
+                    )
+                ).scalar_one()
+                if int(node["Capacity"] or 0) > 0 and node_peer_count >= int(node["Capacity"]):
+                    raise ValueError(f"Node capacity is exhausted: {node['Name']}")
+
+            duration_days = int(package["DurationDays"] or 0)
+            expires_at = now + timedelta(days=duration_days) if duration_days > 0 else None
+            subscription_name = str(name or "").strip() or package["Name"]
+            conn.execute(self.subscriptions.insert().values(
+                SubscriptionID=subscription_id,
+                ClientID=client_id,
+                Name=subscription_name,
+                Status="active",
+                QuotaBytes=int(package["QuotaBytes"] or 0),
+                UsedBytes=0,
+                ExpiresAt=expires_at,
+                MaxPeers=len(nodes),
+                TokenHash=self._hash_token(token),
+                UpdatedAt=now,
+            ))
+            conn.execute(self.subscription_plans.insert().values(
+                SubscriptionID=subscription_id,
+                PackageID=package["PackageID"],
+                PackageName=package["Name"],
+                NodeGroupID=package["NodeGroupID"],
+                NodeGroupName=package["NodeGroupName"],
+                QuotaBytes=int(package["QuotaBytes"] or 0),
+                DurationDays=duration_days,
+                Price=package["Price"],
+                Currency=package["Currency"],
+            ))
+
+            for node in nodes:
+                private_status, private_key = GenerateWireguardPrivateKey()
+                if not private_status:
+                    raise RuntimeError("Unable to generate WireGuard private key")
+                public_status, public_key = GenerateWireguardPublicKey(private_key)
+                if not public_status:
+                    raise RuntimeError("Unable to generate WireGuard public key")
+
+                peer_id = str(uuid.uuid4())
+                peer_name = f"{subscription_name}-{node['Name']}"
+                conn.execute(self.subscription_peers.insert().values(
+                    SubscriptionPeerID=peer_id,
+                    SubscriptionID=subscription_id,
+                    NodeID=node["NodeID"],
+                    RemotePeerID=public_key,
+                    Name=peer_name,
+                    InterfaceName="wg0",
+                    ClientPublicKey=public_key,
+                    ClientPrivateKeyEncrypted=self._encrypt(private_key),
+                    DNS="1.1.1.1",
+                    MTU=1420,
+                    AllowedIPs="0.0.0.0/0, ::/0",
+                    Status="provisioning",
+                    UpdatedAt=now,
+                ))
+                job_id = self._queue_job(
+                    conn, node["NodeID"], "CREATE_PEER",
+                    {
+                        "subscription_peer_id": peer_id,
+                        "interface": "wg0",
+                        "peer_name": peer_name,
+                        "public_key": public_key,
+                    },
+                    subscription_id=subscription_id,
+                    subscription_peer_id=peer_id,
+                    idempotency_key=f"create:{peer_id}",
+                )
+                created_jobs.append({
+                    "node_id": node["NodeID"],
+                    "subscription_peer_id": peer_id,
+                    "job_id": job_id,
+                })
+
+        return {
+            "subscription_id": subscription_id,
+            "subscription_token": token,
+            "subscription_path": f"/sub/{subscription_id}.{token}",
+            "package_id": package_id,
+            "provisioned_nodes": len(created_jobs),
+            "jobs": created_jobs,
+        }
+
     def list_subscriptions(self, client_id=None, include_configs=False):
         query = self.subscriptions.select().order_by(self.subscriptions.c.CreatedAt.desc())
         if client_id:
@@ -291,6 +788,12 @@ class CommercialSubscriptions:
             for subscription in subscriptions:
                 item = self._row(subscription)
                 item.pop("TokenHash", None)
+                plan = conn.execute(
+                    self.subscription_plans.select().where(
+                        self.subscription_plans.c.SubscriptionID == subscription["SubscriptionID"]
+                    )
+                ).mappings().fetchone()
+                item["Plan"] = self._row(plan) if plan else None
                 peers = conn.execute(
                     db.select(
                         self.subscription_peers,
@@ -470,6 +973,19 @@ class CommercialSubscriptions:
                 )
             ).scalar_one()
             unique_node_ids = list(dict.fromkeys(node_ids))
+            plan = conn.execute(
+                self.subscription_plans.select().where(
+                    self.subscription_plans.c.SubscriptionID == subscription_id
+                )
+            ).mappings().fetchone()
+            if plan:
+                allowed_node_ids = set(conn.execute(
+                    db.select(self.node_group_members.c.NodeID).where(
+                        self.node_group_members.c.NodeGroupID == plan["NodeGroupID"]
+                    )
+                ).scalars().all())
+                if any(node_id not in allowed_node_ids for node_id in unique_node_ids):
+                    raise ValueError("Package subscriptions can only use nodes from their node group")
             if current_count + len(unique_node_ids) > int(subscription["MaxPeers"]):
                 raise ValueError("Subscription maximum peer count would be exceeded")
 

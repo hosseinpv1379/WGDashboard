@@ -407,6 +407,70 @@ def API_Commercial_RevokeNode(node_id):
     return ResponseObject(status, None if status else "Node does not exist", status_code=200 if status else 404)
 
 
+@app.get(f'{APP_PREFIX}/api/commercial/node-groups')
+def API_Commercial_NodeGroups():
+    return ResponseObject(data=CommercialSubscriptionManager.list_node_groups())
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/node-groups')
+def API_Commercial_CreateNodeGroup():
+    data = request.get_json(silent=True) or {}
+    try:
+        return ResponseObject(data=CommercialSubscriptionManager.create_node_group(
+            data.get("name"), data.get("node_ids", []), data.get("description", ""),
+            data.get("status", "active"),
+        ), status_code=201)
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/node-groups/<group_id>')
+def API_Commercial_UpdateNodeGroup(group_id):
+    try:
+        status = CommercialSubscriptionManager.update_node_group(
+            group_id, request.get_json(silent=True) or {}
+        )
+        return ResponseObject(
+            status, None if status else "Node group does not exist",
+            status_code=200 if status else 404,
+        )
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.get(f'{APP_PREFIX}/api/commercial/packages')
+def API_Commercial_Packages():
+    active_only = str(request.args.get("active_only", "false")).lower() in {"1", "true", "yes"}
+    return ResponseObject(data=CommercialSubscriptionManager.list_packages(active_only=active_only))
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/packages')
+def API_Commercial_CreatePackage():
+    data = request.get_json(silent=True) or {}
+    try:
+        return ResponseObject(data=CommercialSubscriptionManager.create_package(
+            data.get("name"), data.get("node_group_id"), data.get("quota_gb", 0),
+            data.get("duration_days", 0), data.get("price", 0), data.get("currency", "IRT"),
+            data.get("description", ""), data.get("status", "active"),
+        ), status_code=201)
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/packages/<package_id>')
+def API_Commercial_UpdatePackage(package_id):
+    try:
+        status = CommercialSubscriptionManager.update_package(
+            package_id, request.get_json(silent=True) or {}
+        )
+        return ResponseObject(
+            status, None if status else "Package does not exist",
+            status_code=200 if status else 404,
+        )
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
 @app.get(f'{APP_PREFIX}/api/commercial/subscriptions')
 def API_Commercial_Subscriptions():
     return ResponseObject(data=CommercialSubscriptionManager.list_subscriptions())
@@ -419,13 +483,18 @@ def API_Commercial_CreateSubscription():
     if not DashboardClients.GetClient(client_id):
         return ResponseObject(False, "Client does not exist", status_code=400)
     try:
-        created = CommercialSubscriptionManager.create_subscription(
-            client_id, data.get("name"), data.get("quota_gb", 0), data.get("expires_at"),
-            data.get("max_peers", 1),
-        )
+        if data.get("package_id"):
+            created = CommercialSubscriptionManager.create_subscription_from_package(
+                client_id, data.get("package_id"), data.get("name"),
+            )
+        else:
+            created = CommercialSubscriptionManager.create_subscription(
+                client_id, data.get("name"), data.get("quota_gb", 0), data.get("expires_at"),
+                data.get("max_peers", 1),
+            )
         created["subscription_url"] = request.host_url.rstrip("/") + APP_PREFIX + created["subscription_path"]
         return ResponseObject(data=created, status_code=201)
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, RuntimeError) as exc:
         return ResponseObject(False, str(exc), status_code=400)
 
 

@@ -406,5 +406,10 @@
 	"Usage": "مصرف",
 	"Reset usage": "صفر کردن مصرف",
 	"No servers provisioned": "هیچ سروری برای این اشتراک فعال نشده است",
-	"No subscriptions created": "هیچ اشتراکی ساخته نشده است"
+	"No subscriptions created": "هیچ اشتراکی ساخته نشده است",
+	"Commercial Panel": "پنل تجاری",
+	"Users": "کاربران",
+	"Node Groups": "گروه‌های سرور",
+	"Packages": "پکیج‌ها",
+	"Subscriptions": "اشتراک‌ها"
 }

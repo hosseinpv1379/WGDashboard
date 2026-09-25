@@ -479,5 +479,10 @@
 	"Usage": "",
 	"Reset usage": "",
 	"No servers provisioned": "",
-	"No subscriptions created": ""
+	"No subscriptions created": "",
+	"Commercial Panel": "",
+	"Users": "",
+	"Node Groups": "",
+	"Packages": "",
+	"Subscriptions": ""
 }

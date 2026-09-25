@@ -21,7 +21,7 @@ Enable it with `wg-quick up wg0` and open `51820/udp` in the firewall.
 
 ## Register and run
 
-1. Open **Subscriptions & Nodes** in WGDashboard.
+1. Open **Nodes** in WGDashboard.
 2. Create a node and copy the Node ID and token. The token is shown once.
 3. Copy `.env.example` to `.env` and fill in `WG_NODE_ID` and
    `WG_NODE_TOKEN`.
