@@ -1,0 +1,5 @@
+.env
+.git
+wg-node
+*.json
+certs

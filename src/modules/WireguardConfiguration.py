@@ -271,7 +271,10 @@ class WireguardConfiguration:
                 sqlalchemy.Column('preshared_key', sqlalchemy.String(255)),
                 sqlalchemy.Column('quota_gb', sqlalchemy.Float),
                 sqlalchemy.Column('quota_exceeded', sqlalchemy.Integer),
-                sqlalchemy.Column('quota_exceeded_at', sqlalchemy.DateTime)
+                sqlalchemy.Column('quota_exceeded_at', sqlalchemy.DateTime),
+                sqlalchemy.Column('expires_at', sqlalchemy.DateTime),
+                sqlalchemy.Column('expiry_exceeded', sqlalchemy.Integer),
+                sqlalchemy.Column('expiry_exceeded_at', sqlalchemy.DateTime)
             ]
 
         if dbName is None:
@@ -447,7 +450,10 @@ class WireguardConfiguration:
                                     "preshared_key": i["PresharedKey"] if "PresharedKey" in i.keys() else "",
                                     "quota_gb": 0,
                                     "quota_exceeded": 0,
-                                    "quota_exceeded_at": None
+                                    "quota_exceeded_at": None,
+                                    "expires_at": None,
+                                    "expiry_exceeded": 0,
+                                    "expiry_exceeded_at": None
                                 }
                                 with self.engine.begin() as conn:
                                     conn.execute(
@@ -552,7 +558,10 @@ class WireguardConfiguration:
                         "preshared_key": i["preshared_key"],
                         "quota_gb": float(i.get("quota_gb") or 0),
                         "quota_exceeded": 0,
-                        "quota_exceeded_at": None
+                        "quota_exceeded_at": None,
+                        "expires_at": i.get("expires_at"),
+                        "expiry_exceeded": 0,
+                        "expiry_exceeded_at": None
                     }
                     conn.execute(
                         self.peersTable.insert().values(newPeer)
@@ -597,7 +606,7 @@ class WireguardConfiguration:
     def allowAccessPeers(self, listOfPublicKeys) -> tuple[bool, str]:
         if not self.getStatus():
             self.toggleConfiguration()
-        quota_cycles_reset = 0
+        limit_cycles_reset = 0
         with self.engine.begin() as conn:
             for i in listOfPublicKeys:
                 stmt = self.peersRestrictedTable.select().where(
@@ -618,7 +627,16 @@ class WireguardConfiguration:
                                 "quota_exceeded_at": None,
                             }).where(self.peersRestrictedTable.columns.id == i)
                         )
-                        quota_cycles_reset += 1
+                        limit_cycles_reset += 1
+                    if restrictedPeer.get("expiry_exceeded"):
+                        conn.execute(
+                            self.peersRestrictedTable.update().values({
+                                "expires_at": None,
+                                "expiry_exceeded": 0,
+                                "expiry_exceeded_at": None,
+                            }).where(self.peersRestrictedTable.columns.id == i)
+                        )
+                        limit_cycles_reset += 1
                     conn.execute(
                         self.peersTable.insert().from_select(
                             [c.name for c in self.peersTable.columns],
@@ -654,8 +672,8 @@ class WireguardConfiguration:
         if not self.__wgSave():
             return False, "Failed to save configuration through WireGuard"
         self.getPeers()
-        if quota_cycles_reset:
-            return True, "Access allowed and data quota cycle reset"
+        if limit_cycles_reset:
+            return True, "Access allowed and subscription limits reset"
         return True, "Allow access successfully"
 
     def restrictPeers(self, listOfPublicKeys) -> tuple[bool, str]:
@@ -881,6 +899,34 @@ class WireguardConfiguration:
             if not status:
                 current_app.logger.error(f"Failed to enforce peer data quota: {message}")
         return exceeded_peer_ids
+
+    def enforceExpirations(self) -> list[str]:
+        """Restrict active peers when their configured subscription time expires."""
+        expired_peer_ids = []
+        expired_at = datetime.now()
+        with self.engine.begin() as conn:
+            peers = conn.execute(
+                self.peersTable.select().where(
+                    sqlalchemy.and_(
+                        self.peersTable.c.expires_at.is_not(None),
+                        self.peersTable.c.expires_at <= expired_at,
+                    )
+                )
+            ).mappings().fetchall()
+            for peer in peers:
+                expired_peer_ids.append(peer["id"])
+                conn.execute(
+                    self.peersTable.update().values({
+                        "expiry_exceeded": 1,
+                        "expiry_exceeded_at": expired_at,
+                    }).where(self.peersTable.c.id == peer["id"])
+                )
+
+        if expired_peer_ids:
+            status, message = self.restrictPeers(expired_peer_ids)
+            if not status:
+                current_app.logger.error(f"Failed to enforce peer expiration: {message}")
+        return expired_peer_ids
 
     def getPeersEndpoint(self):
         if not self.getStatus():

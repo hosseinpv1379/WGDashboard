@@ -36,6 +36,18 @@ The Compose stack includes PostgreSQL. Database files, dashboard configuration,
 WireGuard configuration, and AmneziaWG configuration are stored in named volumes
 and survive image rebuilds and container replacement.
 
+### Commercial subscriptions and remote nodes
+
+Open **Subscriptions & Nodes** in the admin sidebar to create timed and metered
+subscriptions. A subscription can provision multiple configurations on separate
+servers. Each remote server runs the Go agent from `wg-node/`; create a node in
+the panel, copy its one-time Node ID and token, and follow `wg-node/README.md`.
+
+Private client keys are encrypted with a Fernet key stored at
+`/data/subscription.key`. This file is inside the persistent `dashboard_data`
+volume and must be included in backups. It can also be supplied explicitly with
+`WGD_SUBSCRIPTION_ENCRYPTION_KEY`.
+
 ### Database web panel
 
 The stack also starts Adminer for browser-based PostgreSQL administration. By

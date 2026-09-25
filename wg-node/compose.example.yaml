@@ -1,0 +1,35 @@
+services:
+  wg-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wg-node:local
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      WG_PANEL_URL: ${WG_PANEL_URL:?Set WG_PANEL_URL}
+      WG_NODE_ID: ${WG_NODE_ID:-}
+      WG_NODE_TOKEN: ${WG_NODE_TOKEN:-}
+      WG_NODE_BOOTSTRAP_TOKEN: ${WG_NODE_BOOTSTRAP_TOKEN:-}
+      WG_NODE_NAME: ${WG_NODE_NAME:-wg-node}
+      WG_NODE_REGION: ${WG_NODE_REGION:-}
+      WG_NODE_PUBLIC_ENDPOINT: ${WG_NODE_PUBLIC_ENDPOINT:?Set the public WireGuard endpoint}
+      WG_NODE_INTERFACE: ${WG_NODE_INTERFACE:-wg0}
+      WG_NODE_ADDRESS_POOL: ${WG_NODE_ADDRESS_POOL:-10.88.0.0/24}
+      WG_NODE_CAPACITY: ${WG_NODE_CAPACITY:-0}
+      WG_NODE_POLL_SECONDS: ${WG_NODE_POLL_SECONDS:-5}
+      WG_NODE_REPORT_SECONDS: ${WG_NODE_REPORT_SECONDS:-15}
+      WG_NODE_PRESHARED_KEY: ${WG_NODE_PRESHARED_KEY:-true}
+      WG_NODE_CA_CERT: ${WG_NODE_CA_CERT:-}
+      WG_NODE_CLIENT_CERT: ${WG_NODE_CLIENT_CERT:-}
+      WG_NODE_CLIENT_KEY: ${WG_NODE_CLIENT_KEY:-}
+      WG_NODE_INSECURE_TLS: ${WG_NODE_INSECURE_TLS:-false}
+    volumes:
+      - /etc/wireguard:/etc/wireguard
+      - ./certs:/etc/wg-node/certs:ro
+      - wg_node_data:/var/lib/wg-node
+
+volumes:
+  wg_node_data:

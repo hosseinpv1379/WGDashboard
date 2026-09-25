@@ -91,6 +91,12 @@ export default {
 						</RouterLink>
 					</li>
 					<li class="nav-item">
+						<RouterLink class="nav-link rounded-3" to="/commercial" active-class="active">
+							<i class="bi bi-diagram-3 me-2"></i>
+							<LocaleText t="Subscriptions & Nodes"></LocaleText>
+						</RouterLink>
+					</li>
+					<li class="nav-item">
 						<RouterLink class="nav-link rounded-3" to="/webhooks"
 									active-class="active">
 							<i class="bi bi-postcard me-2"></i>

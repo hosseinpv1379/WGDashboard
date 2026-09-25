@@ -36,6 +36,8 @@ services:
       database_port: "5432"
       database_username: ${POSTGRES_USER:-wgdashboard}
       database_password: ${POSTGRES_PASSWORD:?Copy docker/.env.example to docker/.env and set POSTGRES_PASSWORD}
+      WGD_NODE_BOOTSTRAP_TOKEN: ${WGD_NODE_BOOTSTRAP_TOKEN:-}
+      WGD_SUBSCRIPTION_ENCRYPTION_KEY: ${WGD_SUBSCRIPTION_ENCRYPTION_KEY:-}
 
     ports:
       - "${WGD_PORT:-10086}:10086/tcp"

@@ -1,0 +1,5 @@
+.env
+wg-node
+state.json
+credentials.json
+certs/

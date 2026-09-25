@@ -1,4 +1,5 @@
 import os
+import datetime
 from flask import current_app
 import random
 import re
@@ -7,7 +8,7 @@ import uuid
 
 from flask import current_app
 from .Peer import Peer
-from .Utilities import CheckAddress, ValidateDNSAddress, GenerateWireguardPublicKey
+from .Utilities import CheckAddress, ValidateDNSAddress, GenerateWireguardPublicKey, ParseOptionalDateTime
 
 
 class AmneziaPeer(Peer):
@@ -23,7 +24,8 @@ class AmneziaPeer(Peer):
                    mtu: int,
                    keepalive: int,
                    notes: str,
-                   quota_gb: float = 0
+                   quota_gb: float = 0,
+                   expires_at=None
                    ) -> tuple[bool, str | None]:
 
         if not self.configuration.getStatus():
@@ -70,6 +72,11 @@ class AmneziaPeer(Peer):
             return False, "Data quota must be a number"
         if quota_gb < 0:
             return False, "Data quota cannot be negative"
+
+        try:
+            expires_at = ParseOptionalDateTime(expires_at)
+        except ValueError as exc:
+            return False, str(exc)
 
         if len(private_key) > 0:
             pubKey = GenerateWireguardPublicKey(private_key)
@@ -120,6 +127,9 @@ class AmneziaPeer(Peer):
                         "quota_gb": quota_gb,
                         "quota_exceeded": 0 if quota_gb == 0 or float(self.total_data or 0) + float(self.cumu_data or 0) < quota_gb else self.quota_exceeded,
                         "quota_exceeded_at": None if quota_gb == 0 or float(self.total_data or 0) + float(self.cumu_data or 0) < quota_gb else self.quota_exceeded_at,
+                        "expires_at": expires_at,
+                        "expiry_exceeded": 0 if expires_at is None or expires_at > datetime.datetime.now() else self.expiry_exceeded,
+                        "expiry_exceeded_at": None if expires_at is None or expires_at > datetime.datetime.now() else self.expiry_exceeded_at,
                     }).where(
                         self.configuration.peersTable.c.id == self.id
                     )

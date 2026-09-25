@@ -107,7 +107,10 @@ class AmneziaConfiguration(WireguardConfiguration):
                 sqlalchemy.Column('preshared_key', sqlalchemy.String(255)),
                 sqlalchemy.Column('quota_gb', sqlalchemy.Float),
                 sqlalchemy.Column('quota_exceeded', sqlalchemy.Integer),
-                sqlalchemy.Column('quota_exceeded_at', sqlalchemy.DateTime)
+                sqlalchemy.Column('quota_exceeded_at', sqlalchemy.DateTime),
+                sqlalchemy.Column('expires_at', sqlalchemy.DateTime),
+                sqlalchemy.Column('expiry_exceeded', sqlalchemy.Integer),
+                sqlalchemy.Column('expiry_exceeded_at', sqlalchemy.DateTime)
             ]
 
         if dbName is None:
@@ -219,7 +222,10 @@ class AmneziaConfiguration(WireguardConfiguration):
                                         "preshared_key": i["PresharedKey"] if "PresharedKey" in i.keys() else "",
                                         "quota_gb": 0,
                                         "quota_exceeded": 0,
-                                        "quota_exceeded_at": None
+                                        "quota_exceeded_at": None,
+                                        "expires_at": None,
+                                        "expiry_exceeded": 0,
+                                        "expiry_exceeded_at": None
                                     }
                                     conn.execute(
                                         self.peersTable.insert().values(tempPeer)
@@ -281,7 +287,10 @@ class AmneziaConfiguration(WireguardConfiguration):
                         "preshared_key": i["preshared_key"],
                         "quota_gb": float(i.get("quota_gb") or 0),
                         "quota_exceeded": 0,
-                        "quota_exceeded_at": None
+                        "quota_exceeded_at": None,
+                        "expires_at": i.get("expires_at"),
+                        "expiry_exceeded": 0,
+                        "expiry_exceeded_at": None
                     }
                     conn.execute(
                         self.peersTable.insert().values(newPeer)

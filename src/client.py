@@ -26,7 +26,8 @@ def ResponseObject(status=True, message=None, data=None, status_code = 200) -> F
 
 
 from modules.DashboardClients import DashboardClients
-def createClientBlueprint(wireguardConfigurations: dict[WireguardConfiguration], dashboardConfig: DashboardConfig, dashboardClients: DashboardClients):
+def createClientBlueprint(wireguardConfigurations: dict[WireguardConfiguration], dashboardConfig: DashboardConfig,
+                          dashboardClients: DashboardClients, commercialSubscriptions=None):
         
     client = Blueprint('client', __name__, template_folder=os.path.abspath("./static/dist/WGDashboardClient"))
     prefix = f'{dashboardConfig.GetConfig("Server", "app_prefix")[1]}/client'
@@ -226,6 +227,15 @@ def createClientBlueprint(wireguardConfigurations: dict[WireguardConfiguration],
     @login_required
     def ClientAPI_Configurations():
         return ResponseObject(True, data=dashboardClients.GetClientAssignedPeers(session['ClientID']))
+
+    @client.get(f'{prefix}/api/subscriptions')
+    @login_required
+    def ClientAPI_Subscriptions():
+        if commercialSubscriptions is None:
+            return ResponseObject(data=[])
+        return ResponseObject(data=commercialSubscriptions.list_subscriptions(
+            client_id=session['ClientID'], include_configs=True
+        ))
     
     @client.get(f'{prefix}/api/settings/getClientProfile')
     @login_required

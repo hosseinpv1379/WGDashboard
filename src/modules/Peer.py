@@ -12,7 +12,7 @@ import sqlalchemy as db
 from .PeerJob import PeerJob
 from  flask import current_app
 from .PeerShareLink import PeerShareLink
-from .Utilities import GenerateWireguardPublicKey, CheckAddress, ValidateDNSAddress
+from .Utilities import GenerateWireguardPublicKey, CheckAddress, ValidateDNSAddress, ParseOptionalDateTime
 
 
 class Peer:
@@ -41,6 +41,9 @@ class Peer:
         self.quota_gb = float(tableData.get("quota_gb") or 0)
         self.quota_exceeded = bool(tableData.get("quota_exceeded") or False)
         self.quota_exceeded_at = tableData.get("quota_exceeded_at")
+        self.expires_at = tableData.get("expires_at")
+        self.expiry_exceeded = bool(tableData.get("expiry_exceeded") or False)
+        self.expiry_exceeded_at = tableData.get("expiry_exceeded_at")
         self.jobs: list[PeerJob] = []
         self.ShareLink: list[PeerShareLink] = []
         self.getJobs()
@@ -63,7 +66,8 @@ class Peer:
                    mtu: int,
                    keepalive: int,
                    notes: str,
-                   quota_gb: float = 0
+                   quota_gb: float = 0,
+                   expires_at=None
                    ) -> tuple[bool, str | None]:
 
         if not self.configuration.getStatus():
@@ -110,6 +114,11 @@ class Peer:
             return False, "Data quota must be a number"
         if quota_gb < 0:
             return False, "Data quota cannot be negative"
+
+        try:
+            expires_at = ParseOptionalDateTime(expires_at)
+        except ValueError as exc:
+            return False, str(exc)
 
         if len(private_key) > 0:
             pubKey = GenerateWireguardPublicKey(private_key)
@@ -159,6 +168,9 @@ class Peer:
                         "quota_gb": quota_gb,
                         "quota_exceeded": 0 if quota_gb == 0 or float(self.total_data or 0) + float(self.cumu_data or 0) < quota_gb else self.quota_exceeded,
                         "quota_exceeded_at": None if quota_gb == 0 or float(self.total_data or 0) + float(self.cumu_data or 0) < quota_gb else self.quota_exceeded_at,
+                        "expires_at": expires_at,
+                        "expiry_exceeded": 0 if expires_at is None or expires_at > datetime.datetime.now() else self.expiry_exceeded,
+                        "expiry_exceeded_at": None if expires_at is None or expires_at > datetime.datetime.now() else self.expiry_exceeded_at,
                     }).where(
                         self.configuration.peersTable.c.id == self.id
                     )

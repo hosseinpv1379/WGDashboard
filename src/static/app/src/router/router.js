@@ -123,6 +123,14 @@ const router = createRouter({
 						}
 					]
 				},
+				{
+					name: "Commercial Subscriptions",
+					path: 'commercial',
+					component: () => import("@/views/commercial.vue"),
+					meta: {
+						title: "Commercial Subscriptions"
+					}
+				},
                 {
                     name: "Webhooks",
                     path: "webhooks",

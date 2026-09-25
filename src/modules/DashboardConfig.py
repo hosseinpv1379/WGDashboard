@@ -123,7 +123,10 @@ class DashboardConfig:
             'preshared_key': db.String(255),
             'quota_gb': db.Float,
             'quota_exceeded': db.Integer,
-            'quota_exceeded_at': db.DateTime
+            'quota_exceeded_at': db.DateTime,
+            'expires_at': db.DateTime,
+            'expiry_exceeded': db.Integer,
+            'expiry_exceeded_at': db.DateTime
         }
 
         inspector = db.inspect(self.engine)

@@ -1,4 +1,5 @@
 import logging
+import io
 import random, shutil, sqlite3, configparser, hashlib, ipaddress, json, os, secrets, subprocess
 import time, re, uuid, bcrypt, psutil, pyotp, threading
 import traceback
@@ -18,7 +19,7 @@ from sqlalchemy import RowMapping
 
 from modules.Utilities import (
     RegexMatch, StringToBoolean, ValidateDNSAddress,
-    GenerateWireguardPublicKey, GenerateWireguardPrivateKey
+    GenerateWireguardPublicKey, GenerateWireguardPrivateKey, ParseOptionalDateTime
 )
 from packaging import version
 from modules.Email import EmailSender
@@ -39,6 +40,7 @@ from modules.DashboardClients import DashboardClients
 from modules.DashboardPlugins import DashboardPlugins
 from modules.DashboardWebHooks import DashboardWebHooks
 from modules.NewConfigurationTemplates import NewConfigurationTemplates
+from modules.CommercialSubscriptions import CommercialSubscriptions
 
 class CustomJsonEncoder(DefaultJSONProvider):
     def __init__(self, app):
@@ -95,6 +97,7 @@ def peerInformationBackgroundThread():
                             c.getPeersTransfer()
                             c.getPeersEndpoint()
                             c.getPeers()
+                            c.enforceExpirations()
                             if DashboardConfig.GetConfig('WireGuardConfiguration', 'peer_tracking')[1] is True:
                                 print("[WGDashboard] Tracking Peers")
                                 if delay == 6:
@@ -123,6 +126,17 @@ def peerJobScheduleBackgroundThread():
                 time.sleep(180)
             except Exception as e:
                 app.logger.error("Background Thread #2 Error", e)
+
+def commercialSubscriptionBackgroundThread():
+    with app.app_context():
+        app.logger.info("Commercial subscription enforcement thread started")
+        time.sleep(10)
+        while True:
+            try:
+                CommercialSubscriptionManager.enforce_limits()
+            except Exception as exc:
+                app.logger.error("Commercial subscription enforcement failed", exc_info=exc)
+            time.sleep(15)
 
 def gunicornConfig():
     _, app_ip = DashboardConfig.GetConfig("Server", "app_ip")
@@ -178,6 +192,8 @@ def startThreads():
     bgThread.start()
     scheduleJobThread = threading.Thread(target=peerJobScheduleBackgroundThread, daemon=True)
     scheduleJobThread.start()
+    commercialThread = threading.Thread(target=commercialSubscriptionBackgroundThread, daemon=True)
+    commercialThread.start()
 
 dictConfig({
     'version': 1,
@@ -208,13 +224,16 @@ with app.app_context():
     NewConfigurationTemplates: NewConfigurationTemplates = NewConfigurationTemplates()
     InitWireguardConfigurationsList(startup=True)
     DashboardClients: DashboardClients = DashboardClients(WireguardConfigurations)
-    app.register_blueprint(createClientBlueprint(WireguardConfigurations, DashboardConfig, DashboardClients))
+    CommercialSubscriptionManager = CommercialSubscriptions()
+    app.register_blueprint(createClientBlueprint(
+        WireguardConfigurations, DashboardConfig, DashboardClients, CommercialSubscriptionManager
+    ))
 
 _, APP_PREFIX = DashboardConfig.GetConfig("Server", "app_prefix")
 cors = CORS(app, resources={rf"{APP_PREFIX}/api/*": {
     "origins": "*",
     "methods": "DELETE, POST, GET, OPTIONS",
-    "allow_headers": ["Content-Type", "wg-dashboard-apikey"]
+    "allow_headers": ["Content-Type", "Authorization", "wg-dashboard-apikey"]
 }})
 _, app_ip = DashboardConfig.GetConfig("Server", "app_ip")
 _, app_port = DashboardConfig.GetConfig("Server", "app_port")
@@ -228,6 +247,11 @@ API Routes
 def auth_req():
     if request.method.lower() == 'options':
         return ResponseObject(True)        
+
+    appPrefix = APP_PREFIX if len(APP_PREFIX) > 0 else ''
+    if (request.path.startswith(f'{appPrefix}/api/node/v1/')
+            or request.path.startswith(f'{appPrefix}/sub/')):
+        return None
 
     DashboardConfig.APIAccessed = False    
     authenticationRequired = DashboardConfig.GetConfig("Server", "auth_req")[1]
@@ -251,7 +275,6 @@ def auth_req():
             DashboardConfig.APIAccessed = True
         else:
             DashboardConfig.APIAccessed = False
-            appPrefix = APP_PREFIX if len(APP_PREFIX) > 0 else ''
             whiteList = [
                 # f'/static/', 
                 f'{appPrefix}/api/validateAuthentication', 
@@ -286,6 +309,194 @@ def auth_req():
 @app.route(f'{APP_PREFIX}/api/handshake', methods=["GET", "OPTIONS"])
 def API_Handshake():
     return ResponseObject(True)
+
+
+def _authenticated_commercial_node():
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer "):
+        return None
+    return CommercialSubscriptionManager.authenticate_node(authorization[7:].strip())
+
+
+@app.post(f'{APP_PREFIX}/api/node/v1/register')
+def API_Node_Register():
+    bootstrap_token = os.getenv("WGD_NODE_BOOTSTRAP_TOKEN", "")
+    authorization = request.headers.get("Authorization", "")
+    provided_token = authorization[7:].strip() if authorization.startswith("Bearer ") else ""
+    if not bootstrap_token or not secrets.compare_digest(provided_token, bootstrap_token):
+        return ResponseObject(False, "Invalid node bootstrap token", status_code=401)
+    data = request.get_json(silent=True) or {}
+    try:
+        created = CommercialSubscriptionManager.create_node(
+            data.get("name"), data.get("region", ""), data.get("public_endpoint", ""),
+            data.get("capacity", 0),
+        )
+        return ResponseObject(data=created, status_code=201)
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/node/v1/heartbeat')
+def API_Node_Heartbeat():
+    node = _authenticated_commercial_node()
+    if node is None:
+        return ResponseObject(False, "Unauthorized node", status_code=401)
+    try:
+        CommercialSubscriptionManager.heartbeat(node["NodeID"], request.get_json(silent=True) or {})
+        return ResponseObject(data={"node_id": node["NodeID"], "server_time": datetime.now()})
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.get(f'{APP_PREFIX}/api/node/v1/jobs')
+def API_Node_Jobs():
+    node = _authenticated_commercial_node()
+    if node is None:
+        return ResponseObject(False, "Unauthorized node", status_code=401)
+    jobs = CommercialSubscriptionManager.lease_jobs(node["NodeID"], request.args.get("limit", 20))
+    return ResponseObject(data=jobs)
+
+
+@app.post(f'{APP_PREFIX}/api/node/v1/jobs/<job_id>/result')
+def API_Node_Job_Result(job_id):
+    node = _authenticated_commercial_node()
+    if node is None:
+        return ResponseObject(False, "Unauthorized node", status_code=401)
+    data = request.get_json(silent=True) or {}
+    try:
+        CommercialSubscriptionManager.complete_job(
+            node["NodeID"], job_id, bool(data.get("success")), data.get("result") or {},
+            data.get("error"),
+        )
+        return ResponseObject()
+    except ValueError as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/node/v1/traffic')
+def API_Node_Traffic():
+    node = _authenticated_commercial_node()
+    if node is None:
+        return ResponseObject(False, "Unauthorized node", status_code=401)
+    accepted = CommercialSubscriptionManager.record_traffic(
+        node["NodeID"], (request.get_json(silent=True) or {}).get("samples", [])
+    )
+    return ResponseObject(data={"accepted": accepted})
+
+
+@app.get(f'{APP_PREFIX}/api/commercial/nodes')
+def API_Commercial_Nodes():
+    return ResponseObject(data=CommercialSubscriptionManager.list_nodes())
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/nodes')
+def API_Commercial_CreateNode():
+    data = request.get_json(silent=True) or {}
+    try:
+        return ResponseObject(data=CommercialSubscriptionManager.create_node(
+            data.get("name"), data.get("region", ""), data.get("public_endpoint", ""),
+            data.get("capacity", 0),
+        ), status_code=201)
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/nodes/<node_id>/revoke')
+def API_Commercial_RevokeNode(node_id):
+    status = CommercialSubscriptionManager.revoke_node(node_id)
+    return ResponseObject(status, None if status else "Node does not exist", status_code=200 if status else 404)
+
+
+@app.get(f'{APP_PREFIX}/api/commercial/subscriptions')
+def API_Commercial_Subscriptions():
+    return ResponseObject(data=CommercialSubscriptionManager.list_subscriptions())
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/subscriptions')
+def API_Commercial_CreateSubscription():
+    data = request.get_json(silent=True) or {}
+    client_id = data.get("client_id")
+    if not DashboardClients.GetClient(client_id):
+        return ResponseObject(False, "Client does not exist", status_code=400)
+    try:
+        created = CommercialSubscriptionManager.create_subscription(
+            client_id, data.get("name"), data.get("quota_gb", 0), data.get("expires_at"),
+            data.get("max_peers", 1),
+        )
+        created["subscription_url"] = request.host_url.rstrip("/") + APP_PREFIX + created["subscription_path"]
+        return ResponseObject(data=created, status_code=201)
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/subscriptions/<subscription_id>')
+def API_Commercial_UpdateSubscription(subscription_id):
+    try:
+        status = CommercialSubscriptionManager.update_subscription(
+            subscription_id, request.get_json(silent=True) or {}
+        )
+        return ResponseObject(status, None if status else "Subscription does not exist", status_code=200 if status else 404)
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/subscriptions/<subscription_id>/rotate-token')
+def API_Commercial_RotateSubscriptionToken(subscription_id):
+    rotated = CommercialSubscriptionManager.rotate_subscription_token(subscription_id)
+    if not rotated:
+        return ResponseObject(False, "Subscription does not exist", status_code=404)
+    rotated["subscription_url"] = request.host_url.rstrip("/") + APP_PREFIX + rotated["subscription_path"]
+    return ResponseObject(data=rotated)
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/subscriptions/<subscription_id>/provision')
+def API_Commercial_ProvisionSubscription(subscription_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        jobs = CommercialSubscriptionManager.provision(
+            subscription_id, data.get("node_ids", []), data.get("interface", "wg0"),
+            data.get("dns", "1.1.1.1"), data.get("mtu", 1420),
+            data.get("allowed_ips", "0.0.0.0/0, ::/0"),
+        )
+        return ResponseObject(data=jobs, status_code=202)
+    except (ValueError, TypeError, RuntimeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/peers/<peer_id>/action')
+def API_Commercial_PeerAction(peer_id):
+    try:
+        job_id = CommercialSubscriptionManager.queue_peer_action(
+            peer_id, (request.get_json(silent=True) or {}).get("operation")
+        )
+        return ResponseObject(data={"job_id": job_id}, status_code=202)
+    except ValueError as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.get(f'{APP_PREFIX}/sub/<subscription_access>')
+def API_Public_Subscription(subscription_access):
+    if "." not in subscription_access:
+        return ResponseObject(False, "Invalid subscription link", status_code=404)
+    subscription_id, token = subscription_access.split(".", 1)
+    payload, error = CommercialSubscriptionManager.get_public_subscription(subscription_id, token)
+    if error:
+        return ResponseObject(False, error, status_code=404 if "exist" in error else 403)
+    if request.args.get("format", "json").lower() != "zip":
+        return ResponseObject(data=payload)
+
+    archive = io.BytesIO()
+    with ZipFile(archive, "w") as zip_file:
+        for item in payload["files"]:
+            safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", item["name"])
+            zip_file.writestr(safe_name, item["configuration"])
+    archive.seek(0)
+    return send_file(
+        archive,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"subscription-{subscription_id}.zip",
+    )
 
 @app.get(f'{APP_PREFIX}/api/validateAuthentication')
 def API_ValidateAuthentication():
@@ -715,6 +926,7 @@ def API_updatePeerSettings(configName):
         keepalive = data['keepalive']
         notes = data.get('notes', '')
         quota_gb = data.get('quota_gb', 0)
+        expires_at = data.get('expires_at')
         wireguardConfig = WireguardConfigurations[configName]
         foundPeer, peer = wireguardConfig.searchPeer(id)
         if foundPeer:
@@ -728,7 +940,8 @@ def API_updatePeerSettings(configName):
                                               mtu,
                                               keepalive,
                                               notes,
-                                              quota_gb)
+                                              quota_gb,
+                                              expires_at)
             else:
                 status, msg = peer.updatePeer(name,
                                               private_key,
@@ -739,10 +952,12 @@ def API_updatePeerSettings(configName):
                                               mtu,
                                               keepalive,
                                               notes,
-                                              quota_gb)
+                                              quota_gb,
+                                              expires_at)
             wireguardConfig.getPeers()
             if status:
                 wireguardConfig.enforceDataQuotas()
+                wireguardConfig.enforceExpirations()
             DashboardWebHooks.RunWebHook('peer_updated', {
                 "configuration": wireguardConfig.Name,
                 "peers": [id]
@@ -899,6 +1114,10 @@ def API_addPeers(configName):
                 return ResponseObject(False, "Data quota must be a number", status_code=400)
             if quota_gb < 0:
                 return ResponseObject(False, "Data quota cannot be negative", status_code=400)
+            try:
+                expires_at = ParseOptionalDateTime(data.get('expires_at'))
+            except ValueError as exc:
+                return ResponseObject(False, str(exc), status_code=400)
     
             if type(mtu) is not int or mtu < 0 or mtu > 1460:
                 default: str = DashboardConfig.GetConfig("Peers", "peer_mtu")[1]
@@ -954,7 +1173,8 @@ def API_addPeers(configName):
                             "mtu": mtu,
                             "keepalive": keep_alive,
                             "notes": "",
-                            "quota_gb": quota_gb
+                            "quota_gb": quota_gb,
+                            "expires_at": expires_at
                         })
                         if addedCount == bulkAddAmount:
                             break
@@ -1020,7 +1240,8 @@ def API_addPeers(configName):
                         "mtu": mtu,
                         "keepalive": keep_alive,
                         "notes": notes,
-                        "quota_gb": quota_gb
+                        "quota_gb": quota_gb,
+                        "expires_at": expires_at
                     }]
                 )
                 return ResponseObject(status=status, message=message, data=addedPeers)

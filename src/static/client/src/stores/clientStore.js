@@ -36,8 +36,31 @@ export const clientStore = defineStore('clientStore',  {
 		},
 		async getConfigurations(){
 			const data = await axiosGet("/api/configurations")
+			const commercial = await axiosGet("/api/subscriptions")
 			if (data){
-				this.configurations = data.data
+				const commercialConfigurations = []
+				if (commercial && commercial.data){
+					commercial.data.forEach(subscription => {
+						subscription.Peers.filter(peer => peer.Status === 'active' && peer.Configuration).forEach(peer => {
+							commercialConfigurations.push({
+								name: peer.Name,
+								protocol: 'wg',
+								data: subscription.UsedGB,
+								quota_gb: subscription.QuotaGB,
+								quota_exceeded: subscription.Status === 'quota_exceeded',
+								expires_at: subscription.ExpiresAt,
+								expiry_exceeded: subscription.Status === 'expired',
+								jobs: [],
+								config: {Name: peer.InterfaceName},
+								peer_configuration_data: {
+									fileName: peer.Name,
+									file: peer.Configuration,
+								},
+							})
+						})
+					})
+				}
+				this.configurations = [...(data.data || []), ...commercialConfigurations]
 			}else{
 				this.newNotification("Failed to fetch configurations", "danger")
 			}

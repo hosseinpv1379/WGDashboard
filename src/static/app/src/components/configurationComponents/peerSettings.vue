@@ -22,9 +22,14 @@ export default {
 		return {dashboardConfigurationStore}
 	},
 	methods: {
+		toDateTimeLocal(value){
+			if (!value) return "";
+			return String(value).replace(" ", "T").slice(0, 16);
+		},
 		reset(){
 			if (this.selectedPeer){
 				this.data = JSON.parse(JSON.stringify(this.selectedPeer))
+				this.data.expires_at = this.toDateTimeLocal(this.data.expires_at)
 				this.dataChanged = false;
 			}
 		},
@@ -118,6 +123,14 @@ export default {
 								       :disabled="this.saving" min="0" step="0.1"
 								       v-model.number="this.data.quota_gb" id="peer_quota_gb">
 								<small class="text-muted"><LocaleText t="Set to 0 for unlimited traffic"></LocaleText></small>
+							</div>
+							<div>
+								<label for="peer_expires_at" class="form-label mb-1">
+									<small class="text-muted"><LocaleText t="Expiration time"></LocaleText></small>
+								</label>
+								<input type="datetime-local" class="form-control form-control-sm rounded-3"
+								       :disabled="this.saving" v-model="this.data.expires_at" id="peer_expires_at">
+								<small class="text-muted"><LocaleText t="Leave empty for unlimited time"></LocaleText></small>
 							</div>
 							<div>
 								<div class="d-flex position-relative">

@@ -28,6 +28,9 @@ const totalDataJobs = computed(() => {
 });
 
 const dateLimit = computed(() => {
+	if (props.config.expires_at){
+		return props.config.expires_at
+	}
 	if (dateJobs.value.length > 0){
 		return dateJobs.value[0].Value
 	}

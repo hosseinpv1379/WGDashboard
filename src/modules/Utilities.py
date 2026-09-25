@@ -1,6 +1,28 @@
 import re, ipaddress
+from datetime import datetime
 import subprocess
 import sqlalchemy
+
+
+def ParseOptionalDateTime(value):
+    """Parse an optional HTML/ISO datetime value into a naive local datetime."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    if not isinstance(value, str):
+        raise ValueError("Expiration time must be a valid date and time")
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError("Expiration time must be a valid date and time") from exc
+    return parsed.astimezone().replace(tzinfo=None) if parsed.tzinfo else parsed
 
 def RegexMatch(regex, text) -> bool:
     """

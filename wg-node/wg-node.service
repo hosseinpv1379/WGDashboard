@@ -1,0 +1,20 @@
+[Unit]
+Description=WGDashboard WireGuard Node Agent
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/wg-node.env
+ExecStart=/usr/local/bin/wg-node
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/wireguard /var/lib/wg-node /tmp
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

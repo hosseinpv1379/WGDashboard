@@ -79,6 +79,16 @@ defineEmits(['close'])
 								</div>
 							</div>
 							<div class="col-12 col-lg-3">
+								<div class="card rounded-3 bg-transparent h-100">
+									<div class="card-body d-flex flex-column justify-content-center">
+										<p class="mb-0 text-muted"><small><LocaleText t="Valid until"></LocaleText></small></p>
+										<strong class="h5" :class="{'text-danger': selectedPeer.expiry_exceeded}">
+											{{ selectedPeer.expires_at || GetLocale('Unlimited time') }}
+										</strong>
+									</div>
+								</div>
+							</div>
+							<div class="col-12 col-lg-3">
 								<div class="card rounded-3 bg-transparent  h-100">
 									<div class="card-body py-2 d-flex flex-column justify-content-center">
 										<p class="mb-0 text-muted"><small>

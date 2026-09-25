@@ -34,6 +34,7 @@ export default {
 				DNS: this.dashboardStore.Configuration.Peers.peer_global_dns,
 				endpoint_allowed_ip: this.dashboardStore.Configuration.Peers.peer_endpoint_allowed_ip,
 				quota_gb: 0,
+				expires_at: "",
 				keepalive: parseInt(this.dashboardStore.Configuration.Peers.peer_keep_alive),
 				mtu: parseInt(this.dashboardStore.Configuration.Peers.peer_mtu),
 				preshared_key: "",
@@ -134,6 +135,14 @@ export default {
 				       min="0" step="0.1" :disabled="this.saving"
 				       class="form-control form-control-sm rounded-3">
 				<small class="text-muted"><LocaleText t="Set to 0 for unlimited traffic"></LocaleText></small>
+			</div>
+			<div>
+				<label for="peer_create_expires_at" class="form-label mb-1">
+					<small class="fw-bold"><LocaleText :t="this.data.bulkAdd ? 'Expiration time for each peer' : 'Expiration time'"></LocaleText></small>
+				</label>
+				<input id="peer_create_expires_at" v-model="this.data.expires_at" type="datetime-local"
+				       :disabled="this.saving" class="form-control form-control-sm rounded-3">
+				<small class="text-muted"><LocaleText t="Leave empty for unlimited time"></LocaleText></small>
 			</div>
 			<PrivatePublicKeyInput :saving="saving" :data="data" v-if="!this.data.bulkAdd"></PrivatePublicKeyInput>
 			<AllowedIPsInput :availableIp="this.availableIp" :saving="saving" :data="data" v-if="!this.data.bulkAdd"></AllowedIPsInput>
