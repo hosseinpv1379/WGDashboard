@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> راهنمای کامل فارسی این نسخه شامل ارتقای نصب فعلی، نصب پنل مرکزی، PostgreSQL،
+> Adminer، نصب `wg-node` و ساخت اشتراک چندسروره در
+> **[README-FA.md](./README-FA.md)** قرار دارد.
+
 > [!WARNING]
 > All users running WGDashboard v4.2.x or later and hosted on the public internet are strongly advised to update to the latest release immediately. For more information: [v4.3.2 Release](https://github.com/WGDashboard/WGDashboard/releases/tag/v4.3.2)
 

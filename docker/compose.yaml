@@ -31,7 +31,7 @@ services:
       wg_autostart: ${WG_AUTOSTART:-wg0}
       username: ${WGD_ADMIN_USERNAME:-admin}
       password: ${WGD_ADMIN_PASSWORD:?Copy docker/.env.example to docker/.env and set WGD_ADMIN_PASSWORD}
-      database_type: postgresql
+      database_type: ${DATABASE_TYPE:-postgresql}
       database_host: postgres
       database_port: "5432"
       database_username: ${POSTGRES_USER:-wgdashboard}
@@ -93,6 +93,10 @@ services:
 
 volumes:
   amnezia_config:
+    name: ${AMNEZIA_CONFIG_VOLUME:-wgdashboard-commercial_amnezia_config}
   wireguard_config:
+    name: ${WIREGUARD_CONFIG_VOLUME:-wgdashboard-commercial_wireguard_config}
   dashboard_data:
+    name: ${DASHBOARD_DATA_VOLUME:-wgdashboard-commercial_dashboard_data}
   postgres_data:
+    name: ${POSTGRES_DATA_VOLUME:-wgdashboard-commercial_postgres_data}
