@@ -1,0 +1,116 @@
+import re, ipaddress
+import subprocess
+import sqlalchemy
+
+def RegexMatch(regex, text) -> bool:
+    """
+    Regex Match
+    @param regex: Regex patter
+    @param text: Text to match
+    @return: Boolean indicate if the text match the regex pattern
+    """
+    pattern = re.compile(regex)
+    return pattern.search(text) is not None
+
+def GetRemoteEndpoint() -> str:
+    """
+    Using socket to determine default interface IP address. Thanks, @NOXICS
+    @return: 
+    """
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("1.1.1.1", 80))  # Connecting to a public IP
+        wgd_remote_endpoint = s.getsockname()[0]
+        return str(wgd_remote_endpoint)
+    except (socket.error, OSError):
+        pass
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except (socket.error, OSError):
+        pass
+    return "127.0.0.1"
+
+
+def StringToBoolean(value: str):
+    """
+    Convert string boolean to boolean
+    @param value: Boolean value in string came from Configuration file
+    @return: Boolean value
+    """
+    return (value.strip().replace(" ", "").lower() in 
+            ("yes", "true", "t", "1", 1))
+
+def CheckAddress(ips_str: str) -> bool:
+    if len(ips_str) == 0:
+        return False
+
+    for ip in ips_str.split(','):
+        stripped_ip = ip.strip()
+        try:
+            # Verify the IP-address, with the strict flag as false also allows for /32 and /128
+            ipaddress.ip_network(stripped_ip, strict=False)
+        except ValueError:
+            return False
+    return True
+
+def CheckPeerKey(peer_key: str) -> bool:
+    return re.match(r"^[A-Za-z0-9+/]{43}=$", peer_key)
+
+def ValidateDNSAddress(addresses_str: str) -> tuple[bool, str | None]:
+    if len(addresses_str) == 0:
+        return False, "Got an empty list/string to check for valid DNS-addresses"
+
+    addresses = addresses_str.split(',')
+    for address in addresses:
+        stripped_address = address.strip()
+
+        if not CheckAddress(stripped_address) and not RegexMatch(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z]{0,61}[a-z]", stripped_address):
+            return False, f"{stripped_address} does not appear to be a valid IP-address or FQDN"
+
+    return True, None
+
+
+def ValidateEndpointAllowedIPs(IPs) -> tuple[bool, str] | tuple[bool, None]:
+    ips = IPs.replace(" ", "").split(",")
+    for ip in ips:
+        try:
+            ipaddress.ip_network(ip, strict=False)
+        except ValueError as e:
+            return False, str(e)
+    return True, None
+
+def GenerateWireguardPublicKey(privateKey: str) -> tuple[bool, str] | tuple[bool, None]:
+    try:
+        publicKey = subprocess.check_output(f"wg pubkey", input=privateKey.encode(), shell=True,
+                                            stderr=subprocess.STDOUT)
+        return True, publicKey.decode().strip('\n')
+    except subprocess.CalledProcessError:
+        return False, None
+    
+def GenerateWireguardPrivateKey() -> tuple[bool, str] | tuple[bool, None]:
+    try:
+        publicKey = subprocess.check_output(f"wg genkey", shell=True,
+                                            stderr=subprocess.STDOUT)
+        return True, publicKey.decode().strip('\n')
+    except subprocess.CalledProcessError:
+        return False, None
+    
+def ValidatePasswordStrength(password: str) -> tuple[bool, str] | tuple[bool, None]:
+    # Rules:
+    #     - Must be over 8 characters & numbers
+    #     - Must contain at least 1 Uppercase & Lowercase letters
+    #     - Must contain at least 1 Numbers (0-9)
+    #     - Must contain at least 1 special characters from $&+,:;=?@#|'<>.-^*()%!~_-
+    if len(password) < 8:
+        return False, "Password must be 8 characters or more"
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least 1 lowercase character"
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least 1 uppercase character"
+    if not re.search(r'\d', password):
+        return False, "Password must contain at least 1 number"
+    if not re.search(r'[$&+,:;=?@#|\'<>.\-^*()%!~_-]', password):
+        return False, "Password must contain at least 1 special character from $&+,:;=?@#|'<>.-^*()%!~_-"
+    
+    return True, None

@@ -1,0 +1,11 @@
+.git
+.github
+*.md
+tests/
+docs/
+src/db
+src/wg-dashboard.ini
+src/static/dist
+src/static/app/node_modules
+src/static/client/node_modules
+docker/.env

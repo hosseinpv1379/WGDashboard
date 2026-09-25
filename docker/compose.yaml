@@ -1,0 +1,96 @@
+name: wgdashboard-commercial
+
+services:
+  wgdashboard:
+    # This image is built from the current checkout, including all local changes.
+    image: ${WGD_IMAGE:-wgdashboard-commercial:latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        VCS_URL: ${VCS_URL:-local}
+        wg_net: ${WG_NETWORK:-10.0.0.1}
+        wg_subn: ${WG_SUBNET:-24}
+        wg_port: ${WG_PORT:-51820}
+    restart: unless-stopped
+    container_name: wgdashboard
+    init: true
+    stop_grace_period: 30s
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    environment:
+      CONFIGURATION_PATH: /data
+      TZ: ${TZ:-UTC}
+      dynamic_config: "true"
+      global_dns: ${GLOBAL_DNS:-1.1.1.1}
+      public_ip: ${PUBLIC_IP:-}
+      wgd_port: "10086"
+      wg_autostart: ${WG_AUTOSTART:-wg0}
+      username: ${WGD_ADMIN_USERNAME:-admin}
+      password: ${WGD_ADMIN_PASSWORD:?Copy docker/.env.example to docker/.env and set WGD_ADMIN_PASSWORD}
+      database_type: postgresql
+      database_host: postgres
+      database_port: "5432"
+      database_username: ${POSTGRES_USER:-wgdashboard}
+      database_password: ${POSTGRES_PASSWORD:?Copy docker/.env.example to docker/.env and set POSTGRES_PASSWORD}
+
+    ports:
+      - "${WGD_PORT:-10086}:10086/tcp"
+      - "${WG_PORT:-51820}:${WG_PORT:-51820}/udp"
+
+    volumes:
+      - amnezia_config:/etc/amnezia/amneziawg
+      - wireguard_config:/etc/wireguard
+      - dashboard_data:/data
+
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: "1"
+      net.ipv4.ip_forward: "1"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wgdashboard
+      POSTGRES_USER: ${POSTGRES_USER:-wgdashboard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy docker/.env.example to docker/.env and set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  adminer:
+    image: adminer:5-standalone
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "${DB_ADMIN_BIND:-127.0.0.1}:${DB_ADMIN_PORT:-8080}:8080/tcp"
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+
+volumes:
+  amnezia_config:
+  wireguard_config:
+  dashboard_data:
+  postgres_data:
