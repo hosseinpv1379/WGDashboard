@@ -162,7 +162,9 @@ RUN export out_adapt=$(ip -o -4 route show to default | awk '{print $NF}') \
 
 # Set a healthcheck to determine the container its health
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD pgrep -f 'gunicorn.*dashboard:app' > /dev/null || exit 1
+  CMD test -s ${WGDASH}/src/gunicorn.pid \
+      && kill -0 "$(cat ${WGDASH}/src/gunicorn.pid)" \
+      || exit 1
 
 # Expose ports on the container
 EXPOSE 10086/tcp 51820/udp

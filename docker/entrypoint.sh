@@ -165,6 +165,13 @@ ensure_installation() {
   else
     echo "Existing wg0 configuration file found, using that."
   fi
+
+  # A DNS entry belongs in client configurations, not on the server interface.
+  # wg-quick hands this value to resolvconf, which replaces Docker's embedded
+  # DNS resolver and makes Compose service names such as "postgres" unreachable.
+  if [[ -f /etc/wireguard/wg0.conf ]]; then
+    sed -i '/^[[:space:]]*DNS[[:space:]]*=/d' /etc/wireguard/wg0.conf
+  fi
 }
 
 set_envvars() {
@@ -271,9 +278,6 @@ set_envvars() {
 start_and_monitor() {
   printf "\n---------------------- STARTING CORE -----------------------\n"
 
-  # Due to resolvconf resetting the DNS we echo back the one we defined (or fallback to default).
-  resolvconf -u
-
   # Due to some instances complaining about this, making sure its there every time.
   mkdir -p /dev/net
   mknod /dev/net/tun c 10 200
@@ -286,12 +290,9 @@ start_and_monitor() {
   [[ ! -d ${WGDASH}/src/download ]] && mkdir ${WGDASH}/src/download
 
   ${WGDASH}/src/venv/bin/gunicorn --config ${WGDASH}/src/gunicorn.conf.py
+  local gunicorn_status=$?
 
-  cp /etc/resolv.conf /etc/resolv.conf.docker
-  /usr/sbin/resolvconf -u
-  cat /etc/resolv.conf.docker | resolvconf -a docker.inet
-
-  if [ $? -ne 0 ]; then
+  if [ $gunicorn_status -ne 0 ]; then
     echo "Loading WGDashboard failed... Look above for details."
   fi
 
