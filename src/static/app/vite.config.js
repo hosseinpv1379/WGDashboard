@@ -1,8 +1,9 @@
 import { fileURLToPath, URL } from 'node:url'
 
 import { defineConfig } from 'vite'
-import {proxy} from "./proxy.js";
 import vue from '@vitejs/plugin-vue'
+
+const proxy = process.env.WGD_DEV_PROXY || 'http://127.0.0.1:10086/'
 
 export default defineConfig(({mode}) => {
 	if (mode === 'electron'){

@@ -3,8 +3,8 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
-import {proxy} from "./proxy.js";
 
+const proxy = process.env.WGD_DEV_PROXY || 'http://127.0.0.1:10086/'
 
 export default defineConfig({
 	plugins: [
