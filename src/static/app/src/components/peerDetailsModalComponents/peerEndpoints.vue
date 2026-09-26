@@ -65,7 +65,7 @@ const loadEndpoints = async () => {
 							return new Style({
 								image: new Circle({
 									radius: 10,
-									fill: new Fill({ color: '#0d6efd' }),
+									fill: new Fill({ color: '#3a63f4' }),
 									stroke: new Stroke({ color: 'white', width: 5 }),
 								})
 							});

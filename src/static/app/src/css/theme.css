@@ -1,0 +1,246 @@
+/*
+ * Visual refresh layer. Loaded after bootstrap.css so these custom
+ * property overrides win the cascade without needing !important.
+ * Every page inherits this through standard Bootstrap utility classes
+ * (bg-primary-subtle, text-primary-emphasis, .card, .btn, .table, ...).
+ */
+
+:root,
+[data-bs-theme=light] {
+    --bs-primary: #3a63f4;
+    --bs-primary-rgb: 58, 99, 244;
+    --bs-primary-text-emphasis: #1d3fc4;
+    --bs-primary-bg-subtle: #e9edfe;
+    --bs-primary-border-subtle: #c1cdfb;
+    --bs-link-color: var(--bs-primary);
+    --bs-link-color-rgb: var(--bs-primary-rgb);
+    --bs-link-hover-color: #1d3fc4;
+    --bs-link-hover-color-rgb: 29, 63, 196;
+    --bs-focus-ring-color: rgba(58, 99, 244, 0.25);
+
+    --bs-body-bg: #f4f6fb;
+    --bs-body-bg-rgb: 244, 246, 251;
+    --bs-tertiary-bg: #edf0f8;
+    --bs-secondary-bg: #e7eaf3;
+
+    --bs-border-radius: 0.65rem;
+    --bs-border-radius-sm: 0.5rem;
+    --bs-border-radius-lg: 0.9rem;
+    --bs-border-radius-xl: 1.25rem;
+
+    --bs-box-shadow-sm: 0 2px 8px rgba(24, 39, 75, 0.06);
+    --bs-box-shadow: 0 10px 28px rgba(24, 39, 75, 0.09);
+    --bs-box-shadow-lg: 0 20px 48px rgba(24, 39, 75, 0.14);
+
+    --app-surface: #ffffff;
+    --app-ambient-1: #eef2ff;
+    --app-ambient-2: #fff3f1;
+}
+
+[data-bs-theme=dark] {
+    --bs-primary: #6690ff;
+    --bs-primary-rgb: 102, 144, 255;
+    --bs-primary-text-emphasis: #a9c1ff;
+    --bs-primary-bg-subtle: #101e3d;
+    --bs-primary-border-subtle: #23386e;
+    --bs-link-color: var(--bs-primary);
+    --bs-link-color-rgb: var(--bs-primary-rgb);
+    --bs-link-hover-color: #a9c1ff;
+    --bs-link-hover-color-rgb: 169, 193, 255;
+    --bs-focus-ring-color: rgba(102, 144, 255, 0.3);
+
+    --bs-body-bg: #14171d;
+    --bs-body-bg-rgb: 20, 23, 29;
+    --bs-tertiary-bg: #1b1f27;
+    --bs-secondary-bg: #1f2430;
+    --bs-border-color: #2a2f3a;
+    --bs-border-color-translucent: rgba(255, 255, 255, 0.1);
+
+    --bs-box-shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.25);
+    --bs-box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+    --bs-box-shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.45);
+
+    --app-surface: #1b1f27;
+    --app-ambient-1: #101a33;
+    --app-ambient-2: #2a1518;
+}
+
+/* Ambient background wash behind the app shell */
+#app {
+    background:
+        radial-gradient(1200px 600px at 8% -10%, var(--app-ambient-1), transparent 60%),
+        radial-gradient(1000px 700px at 110% 10%, var(--app-ambient-2), transparent 55%),
+        var(--bs-body-bg);
+}
+
+/* Thin scrollbars instead of fully hidden ones: visible affordance without clutter */
+::-webkit-scrollbar {
+    display: block;
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: rgba(120, 130, 155, 0.35);
+    border-radius: 100px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(120, 130, 155, 0.6);
+}
+
+/* Buttons */
+.btn {
+    font-weight: 600;
+    transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.btn-primary,
+.btn-brand {
+    box-shadow: 0 6px 16px rgba(var(--bs-primary-rgb), 0.35);
+}
+
+.btn-primary:hover,
+.btn-brand:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+}
+
+.btn-primary:active,
+.btn-brand:active {
+    transform: translateY(0);
+}
+
+.btn.bg-primary-subtle:hover {
+    filter: brightness(0.97);
+}
+
+/* Cards */
+.card {
+    box-shadow: var(--bs-box-shadow-sm);
+    border-color: var(--bs-border-color-translucent, var(--bs-border-color));
+    transition: box-shadow 0.25s ease, transform 0.25s ease, border-color 0.25s ease;
+}
+
+.conf_card:hover,
+.stat-card:hover {
+    box-shadow: var(--bs-box-shadow);
+    transform: translateY(-2px);
+}
+
+.stat-card {
+    background: var(--app-surface);
+    border-radius: var(--bs-border-radius-lg);
+}
+
+.stat-card h6.text-muted i {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    margin-right: 0.5rem;
+    background: var(--bs-primary-bg-subtle);
+    color: var(--bs-primary);
+    font-size: 0.85rem;
+}
+
+.stat-card .progress {
+    border-radius: 100px;
+    background-color: var(--bs-tertiary-bg);
+    overflow: hidden;
+}
+
+.stat-card .progress-bar {
+    border-radius: 100px;
+}
+
+/* Sidebar */
+.sidebar .nav-link,
+.bottomNavContainer .nav-link {
+    position: relative;
+    padding-left: 0.9rem;
+}
+
+.sidebar .nav-link.active {
+    background: var(--bs-primary-bg-subtle);
+    font-weight: 700;
+}
+
+.sidebar .nav-link.active::before {
+    content: "";
+    position: absolute;
+    left: -0.1rem;
+    top: 0.35rem;
+    bottom: 0.35rem;
+    width: 3px;
+    border-radius: 100px;
+    background: linear-gradient(180deg, var(--brandColor1), var(--brandColor2));
+}
+
+.sidebar .nav-link:hover:not(.active) {
+    transform: translateX(2px);
+}
+
+/* Forms */
+.form-control,
+.form-select {
+    background-color: var(--app-surface);
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--bs-primary);
+}
+
+/* Tables */
+.table-responsive {
+    border-radius: var(--bs-border-radius-lg);
+}
+
+.table > tbody > tr {
+    transition: background-color 0.15s ease;
+}
+
+[data-bs-theme=light] .table > tbody > tr:hover {
+    background-color: var(--bs-tertiary-bg);
+}
+
+[data-bs-theme=dark] .table > tbody > tr:hover {
+    background-color: var(--bs-secondary-bg);
+}
+
+/* Modals */
+.modal-content {
+    box-shadow: var(--bs-box-shadow-lg);
+    border: none;
+}
+
+/* Badges get a touch more presence */
+.badge {
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+/* Sign-in card: glass panel over the animated gradient background */
+.signInContainer {
+    background: color-mix(in srgb, var(--app-surface) 72%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--bs-border-color-translucent, rgba(255, 255, 255, 0.4));
+    border-radius: var(--bs-border-radius-xl);
+    box-shadow: var(--bs-box-shadow-lg);
+    padding: 2.5rem;
+}
+
+@media (max-width: 768px) {
+    .signInContainer {
+        padding: 1.5rem;
+        width: 100% !important;
+    }
+}

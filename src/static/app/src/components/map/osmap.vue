@@ -93,14 +93,14 @@ export default {
 							return new Style({
 								image: new Circle({
 									radius: 10,
-									fill: new Fill({ color: feature.get("last") ? '#dc3545':'#0d6efd' }),
+									fill: new Fill({ color: feature.get("last") ? '#dc3545':'#3a63f4' }),
 									stroke: new Stroke({ color: 'white', width: 5 }),
 								})
 							});
 						} else if (feature.getGeometry().getType() === 'LineString') {
 							return new Style({
 								stroke: new Stroke({
-									color: '#0d6efd',
+									color: '#3a63f4',
 									width: 2
 								})
 							});
