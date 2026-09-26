@@ -10,11 +10,6 @@
 > همان سرور اجرا نکنید و هیچ‌وقت برای ارتقا از `docker compose down -v` استفاده
 > نکنید؛ گزینهٔ `-v` Volumeهای داده را حذف می‌کند.
 
-> [!NOTE]
-> نسخهٔ تجاری فعلاً روی شاخهٔ `codex/wireguard` قرار دارد. دستورهای این راهنما
-> همین شاخه را نصب می‌کنند. بعد از Merge شدن نسخهٔ تجاری در `main` می‌توانید نام
-> شاخه را در فرمان‌ها به `main` تغییر دهید.
-
 ## فهرست
 
 - [شروع سریع برای تازه‌کارها](#شروع-سریع-برای-تازه‌کارها)
@@ -85,7 +80,7 @@ sudo systemctl enable --now docker
 دانلود پروژه:
 
 ```bash
-sudo git clone --branch codex/wireguard --single-branch \
+sudo git clone --branch main --single-branch \
   https://github.com/hosseinpv1379/WGDashboard.git /opt/WGDashboard
 cd /opt/WGDashboard
 ```
@@ -214,7 +209,7 @@ docker compose --env-file .env -f compose.example.yaml ps
 
 ```bash
 cd /opt/WGDashboard
-git pull --ff-only origin codex/wireguard
+git pull --ff-only origin main
 docker compose --env-file docker/.env -f docker/compose.yaml pull
 docker compose --env-file docker/.env -f docker/compose.yaml up -d --remove-orphans
 ```
@@ -240,7 +235,7 @@ docker compose --env-file docker/.env -f docker/compose.yaml logs --tail=100 wgd
 
 ```bash
 cd /opt/WGDashboard
-git pull --ff-only origin codex/wireguard
+git pull --ff-only origin main
 docker compose --env-file docker/.env -f docker/compose.yaml pull wg-node-local
 docker compose --env-file docker/.env -f docker/compose.yaml up -d wg-node-local
 ```
@@ -249,7 +244,7 @@ docker compose --env-file docker/.env -f docker/compose.yaml up -d wg-node-local
 
 ```bash
 cd /opt/WGDashboard
-git pull --ff-only origin codex/wireguard
+git pull --ff-only origin main
 cd wg-node
 docker compose --env-file .env -f compose.example.yaml pull
 docker compose --env-file .env -f compose.example.yaml up -d
@@ -264,12 +259,11 @@ docker compose --env-file .env -f compose.example.yaml logs --tail=100 wg-node
 بک‌اند پنل یا `wg-node`) تغییر کرد، باید یک ایمیج Docker جدید ساخته و منتشر شود
 تا مراحل «آپدیت پنل» و «آپدیت نود» بالا چیزی برای Pull کردن داشته باشند.
 
-**۱) تغییرات را به شاخهٔ `main` برسانید و Push کنید:**
+**۱) تغییرات را روی برنچ `main` کامیت و Push کنید:**
 
 ```bash
-git checkout main
-git pull origin main
-git merge codex/wireguard
+git add -A
+git commit -m "شرح تغییرات"
 git push origin main
 ```
 
@@ -430,9 +424,9 @@ find "$BACKUP_DIR" -maxdepth 2 -type f -ls
 
 ```bash
 cd /opt/WGDashboard
-git fetch origin codex/wireguard
-git switch codex/wireguard
-git pull --ff-only origin codex/wireguard
+git fetch origin main
+git switch main
+git pull --ff-only origin main
 ```
 
 اگر `git status` فایل تغییریافته نشان می‌دهد، قبل از Pull آن تغییر را Commit یا
@@ -572,7 +566,7 @@ sudo docker compose version
 ### مرحلهٔ ۲: دریافت پروژه
 
 ```bash
-sudo git clone --branch codex/wireguard --single-branch \
+sudo git clone --branch main --single-branch \
   https://github.com/hosseinpv1379/WGDashboard.git /opt/WGDashboard
 cd /opt/WGDashboard
 ```
@@ -680,9 +674,8 @@ ghcr.io/hosseinpv1379/wgdashboard:latest
 ghcr.io/hosseinpv1379/wg-node:latest
 ```
 
-برای فعال‌شدن `latest` ابتدا تغییرات شاخهٔ `codex/wireguard` را در `main` Merge
-و Push کنید. سپس در تب **Actions** منتظر سبزشدن **Publish container images**
-بمانید. در صفحهٔ **Packages** هر دو Package را باز کنید و از
+برای فعال‌شدن `latest` تغییرات را روی `main` Push کنید. سپس در تب **Actions**
+منتظر سبزشدن **Publish container images** بمانید. در صفحهٔ **Packages** هر دو Package را باز کنید و از
 **Package settings → Change visibility** روی **Public** بگذارید تا سرورها بدون
 Login بتوانند Pull کنند. اگر Package خصوصی بماند، روی هر سرور با PAT دارای
 مجوز `read:packages` وارد شوید:
@@ -835,7 +828,7 @@ sudo ufw allow 51820/udp
 اگر Docker روی Node نصب نیست، همان روش رسمی بخش نصب پنل مرکزی را اجرا کنید.
 
 ```bash
-sudo git clone --branch codex/wireguard --single-branch \
+sudo git clone --branch main --single-branch \
   https://github.com/hosseinpv1379/WGDashboard.git /opt/WGDashboard
 cd /opt/WGDashboard/wg-node
 cp .env.example .env
@@ -1173,7 +1166,7 @@ docker/.env
 
 ```bash
 cd /opt/WGDashboard
-git pull --ff-only origin codex/wireguard
+git pull --ff-only origin main
 docker compose --env-file docker/.env -f docker/compose.yaml pull
 docker compose --env-file docker/.env -f docker/compose.yaml up -d --remove-orphans
 ```
@@ -1182,7 +1175,7 @@ docker compose --env-file docker/.env -f docker/compose.yaml up -d --remove-orph
 
 ```bash
 cd /opt/WGDashboard
-git pull --ff-only origin codex/wireguard
+git pull --ff-only origin main
 cd wg-node
 docker compose --env-file .env -f compose.example.yaml pull
 docker compose --env-file .env -f compose.example.yaml up -d
@@ -1247,7 +1240,7 @@ Nginx/Cloudflare نیز Purge کنید؛ فایل‌های Asset هش‌دار �
 
 ```bash
 cd /opt/WGDashboard
-git pull --ff-only origin codex/wireguard
+git pull --ff-only origin main
 docker compose --env-file docker/.env -f docker/compose.yaml pull wgdashboard
 docker compose --env-file docker/.env -f docker/compose.yaml up -d wgdashboard
 ```
