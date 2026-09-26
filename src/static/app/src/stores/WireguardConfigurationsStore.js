@@ -101,12 +101,14 @@ export const WireguardConfigurationsStore = defineStore('WireguardConfigurations
     },
 	actions: {
 		async getConfigurations(){
-			await fetchGet("/api/getWireguardConfigurations", {}, (res) => {
+			const response = await fetchGet("/api/getWireguardConfigurations", {}, (res) => {
 				if (res.status)  {
                     this.Configurations = res.data
                 }
                 this.ConfigurationLoaded = true
+				return res
 			});
+			return Boolean(response?.status)
 		},
         colorText(color){
             if (color){

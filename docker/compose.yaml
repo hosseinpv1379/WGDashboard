@@ -28,6 +28,7 @@ services:
       global_dns: ${GLOBAL_DNS:-1.1.1.1}
       public_ip: ${PUBLIC_IP:-}
       wgd_port: "10086"
+      dashboard_language: ${WGD_LANGUAGE:-en-US}
       wg_autostart: ${WG_AUTOSTART:-wg0}
       username: ${WGD_ADMIN_USERNAME:-admin}
       password: ${WGD_ADMIN_PASSWORD:?Copy docker/.env.example to docker/.env and set WGD_ADMIN_PASSWORD}
@@ -38,6 +39,11 @@ services:
       database_password: ${POSTGRES_PASSWORD:?Copy docker/.env.example to docker/.env and set POSTGRES_PASSWORD}
       WGD_NODE_BOOTSTRAP_TOKEN: ${WGD_NODE_BOOTSTRAP_TOKEN:-}
       WGD_SUBSCRIPTION_ENCRYPTION_KEY: ${WGD_SUBSCRIPTION_ENCRYPTION_KEY:-}
+      WGD_LOCAL_NODE_ENABLED: "true"
+      WGD_LOCAL_NODE_NAME: ${WGD_LOCAL_NODE_NAME:-panel-local}
+      WGD_LOCAL_NODE_REGION: ${WGD_LOCAL_NODE_REGION:-Local}
+      WGD_LOCAL_NODE_ENDPOINT: ${PUBLIC_IP:?Set PUBLIC_IP in docker/.env}:${WG_PORT:-51820}
+      WGD_LOCAL_NODE_CAPACITY: ${WGD_LOCAL_NODE_CAPACITY:-0}
 
     ports:
       - "${WGD_PORT:-10086}:10086/tcp"
@@ -53,6 +59,43 @@ services:
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
       net.ipv4.ip_forward: "1"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  wg-node-local:
+    image: ${WG_NODE_IMAGE:-wg-node:local}
+    build:
+      context: ../wg-node
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    network_mode: "service:wgdashboard"
+    depends_on:
+      wgdashboard:
+        condition: service_healthy
+    cap_add:
+      - NET_ADMIN
+    environment:
+      WG_PANEL_URL: http://127.0.0.1:10086
+      WG_NODE_CREDENTIALS: /panel-data/local-node-credentials.json
+      WG_NODE_NAME: ${WGD_LOCAL_NODE_NAME:-panel-local}
+      WG_NODE_REGION: ${WGD_LOCAL_NODE_REGION:-Local}
+      WG_NODE_PUBLIC_ENDPOINT: ${PUBLIC_IP:?Set PUBLIC_IP in docker/.env}:${WG_PORT:-51820}
+      WG_NODE_INTERFACE: ${WG_NODE_INTERFACE:-wg0}
+      WG_NODE_ADDRESS_POOL: ${WG_NETWORK:-10.0.0.1}/${WG_SUBNET:-24}
+      WG_NODE_CAPACITY: ${WGD_LOCAL_NODE_CAPACITY:-0}
+      WG_NODE_POLL_SECONDS: ${WG_NODE_POLL_SECONDS:-5}
+      WG_NODE_REPORT_SECONDS: ${WG_NODE_REPORT_SECONDS:-10}
+      WG_NODE_PRESHARED_KEY: ${WG_NODE_PRESHARED_KEY:-true}
+      WG_NODE_STATE: /var/lib/wg-node/state.json
+      WG_NODE_OUTBOUND_DIR: /etc/wg-node/outbounds
+    volumes:
+      - wireguard_config:/etc/wireguard
+      - dashboard_data:/panel-data:ro
+      - wg_node_local_data:/var/lib/wg-node
+      - wg_node_local_config:/etc/wg-node
     logging:
       driver: json-file
       options:
@@ -100,3 +143,7 @@ volumes:
     name: ${DASHBOARD_DATA_VOLUME:-wgdashboard-commercial_dashboard_data}
   postgres_data:
     name: ${POSTGRES_DATA_VOLUME:-wgdashboard-commercial_postgres_data}
+  wg_node_local_data:
+    name: ${WG_NODE_LOCAL_DATA_VOLUME:-wgdashboard-commercial_wg_node_local_data}
+  wg_node_local_config:
+    name: ${WG_NODE_LOCAL_CONFIG_VOLUME:-wgdashboard-commercial_wg_node_local_config}

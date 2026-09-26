@@ -66,13 +66,19 @@ onMounted(load)
       <div class="card-header bg-transparent d-flex align-items-center"><strong>Nodes</strong><button class="btn btn-sm btn-outline-secondary ms-auto" :disabled="loading" @click="load"><i class="bi bi-arrow-clockwise"></i></button></div>
       <div class="table-responsive">
         <table class="table align-middle mb-0">
-          <thead><tr><th>Name</th><th>Location</th><th>Status</th><th>Endpoint</th><th>Capacity</th><th>Last seen</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Location</th><th>Status</th><th>Interfaces</th><th>Capacity</th><th>Last seen</th><th></th></tr></thead>
           <tbody>
             <tr v-for="node in nodes" :key="node.NodeID">
               <td><strong>{{ node.Name }}</strong><br><code class="small">{{ node.NodeID }}</code></td>
               <td>{{ node.Region || '—' }}</td>
               <td><span class="badge" :class="node.Status === 'online' ? 'text-bg-success' : 'text-bg-secondary'">{{ node.Status }}</span></td>
-              <td><code>{{ node.PublicEndpoint || '—' }}</code></td>
+              <td>
+                <div v-for="item in node.Interfaces" :key="item.InterfaceName" class="mb-1">
+                  <code>{{ item.InterfaceName }}</code>
+                  <span class="text-muted small"> · {{ item.AddressPool || 'pool unknown' }} · {{ item.PublicEndpoint || node.PublicEndpoint || 'endpoint unknown' }}</span>
+                </div>
+                <span v-if="!node.Interfaces?.length" class="text-muted">Waiting for agent heartbeat</span>
+              </td>
               <td>{{ node.Capacity || 'Unlimited' }}</td>
               <td>{{ node.LastSeenAt || 'Never' }}</td>
               <td class="text-end"><button class="btn btn-sm btn-outline-danger" @click="revokeNode(node)">Revoke</button></td>

@@ -26,10 +26,13 @@ services:
       WG_NODE_CLIENT_CERT: ${WG_NODE_CLIENT_CERT:-}
       WG_NODE_CLIENT_KEY: ${WG_NODE_CLIENT_KEY:-}
       WG_NODE_INSECURE_TLS: ${WG_NODE_INSECURE_TLS:-false}
+      WG_NODE_OUTBOUND_DIR: /etc/wg-node/outbounds
     volumes:
       - /etc/wireguard:/etc/wireguard
       - ./certs:/etc/wg-node/certs:ro
       - wg_node_data:/var/lib/wg-node
+      - wg_node_outbounds:/etc/wg-node/outbounds
 
 volumes:
   wg_node_data:
+  wg_node_outbounds:

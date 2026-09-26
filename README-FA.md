@@ -24,6 +24,7 @@
 - [دسترسی به دیتابیس با Adminer](#دسترسی-به-دیتابیس-با-adminer)
 - [نصب `wg-node` روی سرور WireGuard](#نصب-wg-node-روی-سرور-wireguard)
 - [ساخت کاربر و اشتراک چندسروره](#ساخت-کاربر-و-اشتراک-چندسروره)
+- [ساخت Outbound وایرگارد](#ساخت-outbound-وایرگارد)
 - [مدل زمان و حجم](#مدل-زمان-و-حجم)
 - [بکاپ، به‌روزرسانی و بازگردانی](#بکاپ-بهروزرسانی-و-بازگردانی)
 - [عیب‌یابی](#عیبیابی)
@@ -174,6 +175,13 @@ AMNEZIA_CONFIG_VOLUME=wgdashboard-commercial_amnezia_config
 WIREGUARD_CONFIG_VOLUME=wgdashboard-commercial_wireguard_config
 DASHBOARD_DATA_VOLUME=wgdashboard-commercial_dashboard_data
 POSTGRES_DATA_VOLUME=wgdashboard-commercial_postgres_data
+WG_NODE_LOCAL_DATA_VOLUME=wgdashboard-commercial_wg_node_local_data
+WG_NODE_LOCAL_CONFIG_VOLUME=wgdashboard-commercial_wg_node_local_config
+
+WGD_LOCAL_NODE_NAME=panel-local
+WGD_LOCAL_NODE_REGION=Local
+WGD_LANGUAGE=en-US
+PUBLIC_IP=YOUR_SERVER_PUBLIC_IP_OR_HOSTNAME
 ```
 
 اگر نام Volumeهای مرحلهٔ ۱ متفاوت بود، مقدار سمت راست را دقیقاً با نام قدیمی
@@ -212,14 +220,16 @@ docker compose --env-file docker/.env -f docker/compose.yaml \
   up -d --build --remove-orphans
 ```
 
-در اولین اجرا جدول‌های Node Group، Package، Snapshot فروش و اشتراک تجاری و
-همچنین ستون‌های زمان انقضا به‌صورت خودکار ساخته می‌شوند.
+در اولین اجرا جدول‌های Node، Interface، Node Group، Package، Outbound، Snapshot
+فروش و اشتراک تجاری به‌صورت خودکار ساخته می‌شوند. سرویس `wg-node-local` نیز
+Interfaceهای همان سرور پنل را ثبت و مدیریت می‌کند.
 
 ### مرحلهٔ ۸: نتیجه را بررسی کنید
 
 ```bash
 docker compose --env-file docker/.env -f docker/compose.yaml ps
 docker compose --env-file docker/.env -f docker/compose.yaml logs --tail=200 wgdashboard
+docker compose --env-file docker/.env -f docker/compose.yaml logs --tail=200 wg-node-local
 docker compose --env-file docker/.env -f docker/compose.yaml logs --tail=100 postgres
 ```
 
@@ -229,8 +239,9 @@ docker compose --env-file docker/.env -f docker/compose.yaml logs --tail=100 pos
 http://SERVER_IP:10086
 ```
 
-در منوی کناری باید بخش‌های **Nodes**، **Node Groups**، **Users**، **Packages** و
-**Subscriptions** نمایش داده شوند.
+در منوی کناری باید بخش‌های **Users**، **Nodes**، **Node Groups**، **Outbounds**،
+**Packages** و **Subscriptions** نمایش داده شوند. رابط Docker با
+`WGD_LANGUAGE=en-US` به انگلیسی نگه داشته می‌شود.
 
 ---
 
@@ -302,6 +313,7 @@ VCS_URL=https://github.com/hosseinpv1379/WGDashboard
 
 WGD_ADMIN_USERNAME=admin
 WGD_ADMIN_PASSWORD=CHANGE_ME_ADMIN_PASSWORD
+WGD_LANGUAGE=en-US
 
 DATABASE_TYPE=postgresql
 POSTGRES_USER=wgdashboard
@@ -314,6 +326,14 @@ AMNEZIA_CONFIG_VOLUME=wgdashboard-commercial_amnezia_config
 WIREGUARD_CONFIG_VOLUME=wgdashboard-commercial_wireguard_config
 DASHBOARD_DATA_VOLUME=wgdashboard-commercial_dashboard_data
 POSTGRES_DATA_VOLUME=wgdashboard-commercial_postgres_data
+WG_NODE_LOCAL_DATA_VOLUME=wgdashboard-commercial_wg_node_local_data
+WG_NODE_LOCAL_CONFIG_VOLUME=wgdashboard-commercial_wg_node_local_config
+
+WGD_LOCAL_NODE_NAME=panel-local
+WGD_LOCAL_NODE_REGION=Local
+WGD_LOCAL_NODE_CAPACITY=0
+WG_NODE_INTERFACE=wg0
+WG_NODE_REPORT_SECONDS=10
 
 DB_ADMIN_BIND=127.0.0.1
 DB_ADMIN_PORT=8080
@@ -359,7 +379,7 @@ docker compose --env-file docker/.env -f docker/compose.yaml logs -f wgdashboard
 در یک Terminal دیگر:
 
 ```bash
-curl -I http://127.0.0.1:10086
+curl -fsS http://127.0.0.1:10086/healthz
 ```
 
 ورود مستقیم:
@@ -404,8 +424,10 @@ http://127.0.0.1:8080
 
 ## نصب `wg-node` روی سرور WireGuard
 
-این بخش باید روی **هر سرور VPN** تکرار شود، نه داخل سرور مرکزی؛ مگر اینکه همان
-سرور قرار است نقش Node را هم داشته باشد.
+این بخش فقط روی **Nodeهای Remote** تکرار می‌شود. در نصب Docker مرکزی، سرویس
+`wg-node-local` به‌طور خودکار ساخته می‌شود، Credential را از Volume پنل
+می‌خواند و `wg0` همان سرور پنل را به بخش Nodes اضافه می‌کند؛ بنابراین روی سرور
+مرکزی Agent جداگانه نصب نکنید.
 
 ### مدل پیشنهادی: Docker
 
@@ -586,27 +608,45 @@ WG_NODE_BOOTSTRAP_TOKEN=LONG_RANDOM_VALUE
 Agent بعد از ثبت، Credential را در Volume خود ذخیره می‌کند. پس از ثبت همهٔ
 Nodeها، Bootstrap Token را از پنل مرکزی خالی کنید.
 
-### مدل جایگزین: اجرای Native با systemd
+### مدل جایگزین: فایل باینری مستقل با systemd
 
-Docker روش پیشنهادی است. برای اجرای Native باید Go نصب باشد:
+`wg-node` یک فایل باینری مستقل است و در زمان اجرا به Go نیاز ندارد. Go فقط روی
+ماشینی که Binary را Build می‌کند لازم است:
 
 ```bash
 cd /opt/WGDashboard/wg-node
-go build -o /usr/local/bin/wg-node .
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o wg-node .
+sudo install -m 0755 wg-node /usr/local/bin/wg-node
+sudo install -m 0700 -d /etc/wg-node/outbounds /var/lib/wg-node
+sudo cp config.example.json /etc/wg-node/config.json
 sudo cp wg-node.service /etc/systemd/system/wg-node.service
-sudo cp .env /etc/wg-node.env
+sudo install -m 0600 .env /etc/wg-node.env
+sudo chmod 600 /etc/wg-node/config.json
+sudo nano /etc/wg-node/config.json
 sudo chmod 600 /etc/wg-node.env
 sudo systemctl daemon-reload
 sudo systemctl enable --now wg-node
 sudo journalctl -u wg-node -f
 ```
 
+فایل‌های این مدل عمداً از هم جدا هستند:
+
+| مسیر | کاربرد |
+| --- | --- |
+| `/usr/local/bin/wg-node` | Binary اجرایی |
+| `/etc/wg-node/config.json` | تنظیمات ثابت و چند Interface |
+| `/etc/wg-node.env` | Override و Secretهای محیطی |
+| `/var/lib/wg-node/credentials.json` | Credential ثبت خودکار |
+| `/var/lib/wg-node/state.json` | Session، Peerها و وضعیت Outbound |
+| `/etc/wg-node/outbounds/*.conf` | کانفیگ‌های Sanitized شدهٔ Outbound |
+
 ---
 
 ## ساخت کاربر و اشتراک چندسروره
 
-پنل تجاری پنج بخش مستقل دارد: **Nodes**، **Node Groups**، **Users**،
-**Packages** و **Subscriptions**. ترتیب استاندارد راه‌اندازی به شکل زیر است.
+پنل تجاری شش بخش مستقل دارد: **Users**، **Nodes**، **Node Groups**،
+**Outbounds**، **Packages** و **Subscriptions**. ترتیب استاندارد راه‌اندازی به
+شکل زیر است.
 
 ### ۱. ثبت Nodeها
 
@@ -615,12 +655,13 @@ sudo journalctl -u wg-node -f
 
 ### ۲. ساخت Node Group
 
-در بخش **Node Groups** لوکیشن‌هایی را که باید با هم فروخته شوند داخل یک گروه
-قرار دهید. مثلاً گروه `Europe Duo` می‌تواند شامل این دو Node باشد:
+در بخش **Node Groups**، Node و Interfaceهای قابل فروش را انتخاب کنید. یک Node
+می‌تواند `wg0` و `wg1` داشته باشد و هر Target یک فایل کانفیگ مستقل می‌سازد.
+مثلاً گروه `Europe Duo` می‌تواند شامل این دو Target باشد:
 
 ```text
-germany-1  → Germany
-finland-1  → Finland
+germany-1 / wg0  → Germany
+finland-1 / wg0  → Finland
 ```
 
 هر پکیجی که به این گروه متصل شود، برای هر اشتراک دو کانفیگ می‌سازد.
@@ -628,6 +669,9 @@ finland-1  → Finland
 ### ۳. ساخت کاربر
 
 از منوی **Users** یک کاربر بسازید. اشتراک تجاری حتماً به یک User متصل می‌شود.
+برای کاربر Local می‌توانید **Reset link** بسازید؛ لینک امن ۳۰ دقیقه اعتبار دارد
+و مستقیماً فرم تعیین رمز جدید را باز می‌کند. کاربری که سابقهٔ اشتراک دارد برای
+حفظ سوابق فروش از پنل قابل حذف نیست.
 
 ### ۴. ساخت Package
 
@@ -652,7 +696,7 @@ provision** را بزنید. پنل به‌صورت خودکار:
 
 1. حجم، مدت، قیمت و گروه پکیج را به‌عنوان Snapshot فروش ذخیره می‌کند.
 2. تاریخ انقضا را از زمان ایجاد به‌علاوهٔ مدت پکیج محاسبه می‌کند.
-3. برای تمام Nodeهای گروه Peer و Job ساخت ایجاد می‌کند.
+3. برای تمام Node/Interfaceهای گروه Peer و Job ساخت ایجاد می‌کند.
 4. یک لینک Subscription واحد شامل تمام فایل‌های کانفیگ می‌سازد.
 
 اگر بعداً قیمت یا حجم Package تغییر کند، مشخصات اشتراک‌های فروخته‌شدهٔ قبلی
@@ -664,7 +708,14 @@ provision** را بزنید. پنل به‌صورت خودکار:
 
 وضعیت هر Peer ابتدا `provisioning` و پس از اجرای Job توسط `wg-node` برابر
 `active` می‌شود. برای اشتراک‌های قدیمی و دستی همچنان امکان انتخاب Node و
-Provision دستی وجود دارد.
+Provision دستی وجود دارد. خطای موقت هر Job تا سه بار Retry می‌شود؛ اگر پس از سه
+بار همچنان `error` بود، مشکل Node را رفع و دکمهٔ **Retry** همان Peer را بزنید.
+
+Heartbeat علاوه بر Interfaceها، موجودی Peerهای Agent را هم تطبیق می‌دهد. اگر
+فایل state یک Node در اثر نصب مجدد از بین برود، پنل Peer فعال را با همان IP و
+Public Key و Preshared Key قبلی بازسازی و Outbound فعال را دوباره Apply می‌کند؛
+در نتیجه کانفیگ دانلودشدهٔ کاربر عوض نمی‌شود. Peer/Outbound یتیم یا وضعیت اشتباه
+enable/disable نیز خودکار اصلاح می‌شود.
 
 ### ۷. دریافت کانفیگ‌ها
 
@@ -690,6 +741,37 @@ Client پس از ورود به پرتال خودش نیز کانفیگ‌های 
 
 ---
 
+## ساخت Outbound وایرگارد
+
+Outbound باعث می‌شود فقط کاربران یک Interface مشخص، مثلاً `wg0` با شبکهٔ
+`10.88.0.0/24`، از یک تونل WireGuard بالادستی خارج شوند. Route پیش‌فرض خود
+سرور و ارتباط Agent با پنل تغییر نمی‌کند.
+
+1. در **Nodes** صبر کنید Interface موردنظر توسط Heartbeat نمایش داده شود.
+2. وارد **Outbounds** شوید و Node و Source Interface را انتخاب کنید.
+3. نام Interface خروجی مانند `wgo0` را وارد کنید.
+4. کانفیگ Client وایرگارد بالادستی را Paste کنید؛ `AllowedIPs` باید شامل
+   `0.0.0.0/0` باشد.
+5. روی **Create and apply** بزنید و رسیدن وضعیت به `active` را بررسی کنید.
+
+برای جلوگیری از اجرای فرمان دلخواه، Agent گزینه‌های `PreUp`، `PostUp`،
+`PreDown`، `PostDown`، `DNS`، `Table` و `SaveConfig` ورودی را حذف و
+`Table = off` را خودش اعمال می‌کند. Private Key کانفیگ در PostgreSQL به‌صورت
+رمزشده ذخیره می‌شود و فقط هنگام تحویل Job به Node رمزگشایی می‌شود.
+
+در Node بررسی کنید:
+
+```bash
+sudo wg show wgo0
+sudo ip rule show
+sudo ip route show table all | grep wgo0
+sudo iptables -t nat -S POSTROUTING | grep wgo0
+```
+
+نسخهٔ فعلی Outbound فقط Source Poolهای IPv4 را پشتیبانی می‌کند.
+
+---
+
 ## مدل زمان و حجم
 
 ### زمان
@@ -701,19 +783,28 @@ Client پس از ورود به پرتال خودش نیز کانفیگ‌های 
 
 ### حجم مشترک
 
-مثلاً یک اشتراک `100GB` سه کانفیگ دارد:
+مصرف تجاری برابر مجموع `RX + TX` است؛ بنابراین دانلود و آپلود هر دو از سهمیه
+کم می‌شوند. مقدار نمایشی پنل `GiB` است (`1 GiB = 1024³ bytes`). مثلاً یک اشتراک
+`100 GiB` سه کانفیگ دارد:
 
 ```text
-Germany    20GB
-Finland    35GB
-Turkey     45GB
+Germany    20 GiB
+Finland    35 GiB
+Turkey     45 GiB
 ----------------
-Total     100GB
+Total     100 GiB
 ```
 
 پس از رسیدن مجموع به سقف، وضعیت اشتراک `quota_exceeded` می‌شود و برای تمام
 Nodeها Job غیرفعال‌سازی ساخته می‌شود. به‌اندازهٔ فاصلهٔ گزارش‌ها ممکن است مقدار
-کمی مصرف اضافه ثبت شود.
+کمی مصرف اضافه ثبت شود. گزارش تکراری دوباره حساب نمی‌شود، قطع یک گزارش با
+counter تجمعی بعدی جبران می‌شود، کاهش counter پس از Restart یک بار محاسبه
+می‌شود و **Reset usage** baseline فعلی را حفظ می‌کند تا ترافیک قدیمی دوباره
+وارد سهمیه نشود.
+
+برای جلوگیری از رشد بی‌حد دیتابیس، از هر Peer و Session فقط آخرین گزارش خام
+نگه داشته می‌شود؛ مقدار تجمیعی دقیق در Peer و Subscription باقی می‌ماند و از هر
+Session قدیمی نیز یک رکورد برای جلوگیری از replay حفظ می‌شود.
 
 ### وضعیت‌ها
 
@@ -797,11 +888,28 @@ cd /opt/WGDashboard
 docker compose --env-file docker/.env -f docker/compose.yaml ps
 docker compose --env-file docker/.env -f docker/compose.yaml logs --tail=200 wgdashboard
 sudo ss -lntp | grep 10086
-curl -I http://127.0.0.1:10086
+curl -fsS http://127.0.0.1:10086/healthz
 ```
 
 اگر روی localhost پاسخ می‌دهد ولی از بیرون باز نمی‌شود، Firewall یا Security
 Group ارائه‌دهنده را بررسی کنید.
+
+### پنل باز می‌شود ولی روی Loading می‌ماند
+
+نسخهٔ فعلی برای HTML اصلی Header ضدکش می‌فرستد، درخواست‌های Frontend پس از ۲۰
+ثانیه Timeout می‌شوند و احراز هویت redirect حلقه‌ای ایجاد نمی‌کند. بعد از ارتقا:
+
+```bash
+curl -fsS http://127.0.0.1:10086/healthz
+curl -I http://127.0.0.1:10086/
+docker compose --env-file docker/.env -f docker/compose.yaml logs --tail=200 wgdashboard
+```
+
+پاسخ `healthz` باید `web: ok` و `database: ok` داشته باشد و Header صفحهٔ اصلی
+باید شامل `Cache-Control: no-store` باشد. سپس یک بار Hard Refresh مرورگر انجام
+دهید (`Ctrl+Shift+R` یا `Cmd+Shift+R`). اگر Reverse Proxy دارید، کش HTML را در
+Nginx/Cloudflare نیز Purge کنید؛ فایل‌های Asset هش‌دار هستند و HTML قدیمی ممکن
+است به Bundle حذف‌شده اشاره کند.
 
 ### Build فرانت‌اند روی `proxy.js` متوقف می‌شود
 
@@ -864,6 +972,10 @@ docker compose --env-file .env -f compose.example.yaml logs --tail=200 wg-node
 - `/etc/wireguard` قابل نوشتن نیست.
 - ظرفیت Node تمام شده است.
 
+Agent هر خطای اجرایی را با فاصله تا سه بار تکرار می‌کند. پس از رفع علت، در
+**Subscriptions** روی **Retry** بزنید. حذف دستی `state.json` لازم نیست؛ Inventory
+Heartbeat وضعیت از‌دست‌رفته را از اطلاعات پنل بازسازی می‌کند.
+
 ### اشتراک بعد از ساخت فایل ندارد
 
 - حداقل یک Node آنلاین انتخاب کنید.
@@ -890,7 +1002,7 @@ cd /opt/WGDashboard
 docker compose --env-file docker/.env -f docker/compose.yaml ps
 
 # لاگ زنده
-docker compose --env-file docker/.env -f docker/compose.yaml logs -f wgdashboard
+docker compose --env-file docker/.env -f docker/compose.yaml logs -f wgdashboard wg-node-local
 
 # Restart
 docker compose --env-file docker/.env -f docker/compose.yaml restart wgdashboard
@@ -936,7 +1048,8 @@ Volume قدیمی هنوز روی دیسک وجود داشته باشد.
 ### آیا روی هر Node باید خود WGDashboard نصب شود؟
 
 خیر. فقط سرور مرکزی WGDashboard، PostgreSQL و Adminer دارد. هر سرور VPN فقط
-WireGuard و `wg-node` لازم دارد.
+WireGuard و Binary مربوط به `wg-node` لازم دارد. در خود سرور مرکزی این Agent
+توسط Compose و با نام `wg-node-local` به‌صورت خودکار اجرا می‌شود.
 
 ### آیا Node به پورت API ورودی نیاز دارد؟
 

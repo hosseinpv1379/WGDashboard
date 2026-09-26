@@ -19,7 +19,7 @@ export default {
 </script>
 
 <template>
-	<div class="container-fluid flex-grow-1 main" :data-bs-theme="this.dashboardConfigurationStore.Configuration.Server.dashboard_theme">
+	<div class="container-fluid flex-grow-1 main" :data-bs-theme="this.dashboardConfigurationStore.Configuration?.Server?.dashboard_theme || 'light'">
 		<div class="row h-100">
 			<Navbar></Navbar>
 			<main class="col-md-9 col-lg-10 overflow-y-scroll mb-0 pt-2">

@@ -1,5 +1,5 @@
 <script setup>
-import {onMounted, reactive, ref} from 'vue'
+import {computed, onMounted, reactive, ref} from 'vue'
 import {fetchGet, fetchPost} from '@/utilities/fetch.js'
 import {DashboardConfigurationStore} from '@/stores/DashboardConfigurationStore.js'
 
@@ -7,21 +7,39 @@ const dashboardStore = DashboardConfigurationStore()
 const nodes = ref([])
 const groups = ref([])
 const loading = ref(false)
-const form = reactive({name: '', description: '', node_ids: [], status: 'active'})
+const form = reactive({name: '', description: '', target_keys: [], status: 'active'})
+const targetOptions = computed(() => nodes.value.flatMap((node) => {
+  const interfaces = node.Interfaces?.length ? node.Interfaces : [{InterfaceName: 'wg0', Status: 'unknown'}]
+  return interfaces.map((item) => ({
+    key: `${node.NodeID}::${item.InterfaceName}`,
+    nodeID: node.NodeID,
+    interfaceName: item.InterfaceName,
+    label: `${node.Name} / ${item.InterfaceName}`,
+    location: node.Region || 'No location',
+    status: item.Status || node.Status,
+  }))
+}))
+const targetsFromKeys = (keys) => (keys || []).map((key) => {
+  const [node_id, interfaceName] = key.split('::')
+  return {node_id, interface: interfaceName}
+})
 
 const load = async () => {
   loading.value = true
   await fetchGet('/api/commercial/nodes', {}, (response) => { nodes.value = response.data || [] })
   await fetchGet('/api/commercial/node-groups', {}, (response) => {
-    groups.value = (response.data || []).map((group) => ({...group, NodeIDs: [...(group.NodeIDs || [])]}))
+    groups.value = (response.data || []).map((group) => ({...group, TargetKeys: [...(group.TargetKeys || [])]}))
   })
   loading.value = false
 }
 
 const createGroup = async () => {
-  await fetchPost('/api/commercial/node-groups', form, (response) => {
+  await fetchPost('/api/commercial/node-groups', {
+    name: form.name, description: form.description, status: form.status,
+    targets: targetsFromKeys(form.target_keys),
+  }, (response) => {
     if (response.status) {
-      Object.assign(form, {name: '', description: '', node_ids: [], status: 'active'})
+      Object.assign(form, {name: '', description: '', target_keys: [], status: 'active'})
       dashboardStore.newMessage('Node Groups', 'Node group created', 'success')
     }
   })
@@ -32,7 +50,7 @@ const updateGroup = async (group) => {
   await fetchPost(`/api/commercial/node-groups/${group.NodeGroupID}`, {
     name: group.Name,
     description: group.Description,
-    node_ids: group.NodeIDs,
+    targets: targetsFromKeys(group.TargetKeys),
     status: group.Status,
   }, (response) => {
     if (response.status) dashboardStore.newMessage('Node Groups', 'Node group updated', 'success')
@@ -56,16 +74,16 @@ onMounted(load)
         <div class="col-md-6"><label class="form-label">Description</label><input v-model.trim="form.description" class="form-control" placeholder="Germany + Finland"></div>
         <div class="col-md-2"><label class="form-label">Status</label><select v-model="form.status" class="form-select"><option value="active">Active</option><option value="disabled">Disabled</option></select></div>
         <div class="col-12">
-          <label class="form-label">Nodes / locations</label>
+          <label class="form-label">Node interfaces / locations</label>
           <div class="d-flex flex-wrap gap-3 border rounded-3 p-3">
-            <label v-for="node in nodes" :key="node.NodeID" class="form-check mb-0">
-              <input v-model="form.node_ids" class="form-check-input" type="checkbox" :value="node.NodeID">
-              <span class="form-check-label">{{ node.Name }} <span class="text-muted">({{ node.Region || 'No location' }})</span></span>
+            <label v-for="target in targetOptions" :key="target.key" class="form-check mb-0">
+              <input v-model="form.target_keys" class="form-check-input" type="checkbox" :value="target.key">
+              <span class="form-check-label">{{ target.label }} <span class="text-muted">({{ target.location }})</span></span>
             </label>
             <span v-if="!nodes.length" class="text-muted">Create at least one node first.</span>
           </div>
         </div>
-        <div class="col-12 text-end"><button class="btn btn-dark" :disabled="!form.node_ids.length" type="submit"><i class="bi bi-plus-lg me-2"></i>Create group</button></div>
+        <div class="col-12 text-end"><button class="btn btn-dark" :disabled="!form.target_keys.length" type="submit"><i class="bi bi-plus-lg me-2"></i>Create group</button></div>
       </form>
     </div>
 
@@ -78,17 +96,17 @@ onMounted(load)
             <div class="col-md-4"><label class="form-label small">Status</label><select v-model="group.Status" class="form-select"><option value="active">Active</option><option value="disabled">Disabled</option></select></div>
             <div class="col-12"><label class="form-label small">Description</label><input v-model.trim="group.Description" class="form-control"></div>
             <div class="col-12">
-              <label class="form-label small">Included nodes</label>
+              <label class="form-label small">Included node interfaces</label>
               <div class="d-flex flex-wrap gap-3 border rounded-3 p-3">
-                <label v-for="node in nodes" :key="node.NodeID" class="form-check mb-0">
-                  <input v-model="group.NodeIDs" class="form-check-input" type="checkbox" :value="node.NodeID">
-                  <span class="form-check-label">{{ node.Name }} <span class="text-muted">({{ node.Region || '—' }})</span></span>
+                <label v-for="target in targetOptions" :key="target.key" class="form-check mb-0">
+                  <input v-model="group.TargetKeys" class="form-check-input" type="checkbox" :value="target.key">
+                  <span class="form-check-label">{{ target.label }} <span class="text-muted">({{ target.location }})</span></span>
                 </label>
               </div>
             </div>
             <div class="col-12 d-flex align-items-center">
-              <small class="text-muted">{{ group.NodeCount }} location(s) · <code>{{ group.NodeGroupID }}</code></small>
-              <button class="btn btn-primary ms-auto" :disabled="!group.NodeIDs.length" @click="updateGroup(group)"><i class="bi bi-save me-2"></i>Save</button>
+              <small class="text-muted">{{ group.NodeCount }} node(s) · {{ group.InterfaceCount }} configuration(s) · <code>{{ group.NodeGroupID }}</code></small>
+              <button class="btn btn-primary ms-auto" :disabled="!group.TargetKeys.length" @click="updateGroup(group)"><i class="bi bi-save me-2"></i>Save</button>
             </div>
           </div>
         </div>

@@ -32,18 +32,20 @@ cp docker/.env.example docker/.env
 docker compose --env-file docker/.env -f docker/compose.yaml up -d --build
 ```
 
-The Compose stack includes PostgreSQL. Database files, dashboard configuration,
-WireGuard configuration, and AmneziaWG configuration are stored in named volumes
-and survive image rebuilds and container replacement.
+The Compose stack includes PostgreSQL and a built-in `wg-node-local` service.
+Database files, dashboard configuration, WireGuard configuration, agent state,
+outbound configuration, and AmneziaWG configuration are stored in named volumes
+and survive image rebuilds and container replacement. `PUBLIC_IP` is required
+because it becomes the customer-facing endpoint of the local node.
 
 ### Commercial catalog and remote nodes
 
-Use the separate **Nodes**, **Node Groups**, **Users**, **Packages** and
-**Subscriptions** sections to create timed and metered plans. A package selects
-its allowed locations through a node group, and each new subscription is
-provisioned on every node in that group. Each remote server runs the Go agent
-from `wg-node/`; create a node in the panel, copy its one-time Node ID and token,
-and follow `wg-node/README.md`.
+Use **Users**, **Nodes**, **Node Groups**, **Outbounds**, **Packages**, and
+**Subscriptions** to create timed and metered plans. A node group targets exact
+WireGuard interfaces, and each new subscription is provisioned on every target.
+The local interface is managed automatically; each remote server runs the Go
+agent from `wg-node/`. Outbounds route a selected client pool through an upstream
+WireGuard configuration without replacing the server's main default route.
 
 Private client keys are encrypted with a Fernet key stored at
 `/data/subscription.key`. This file is inside the persistent `dashboard_data`

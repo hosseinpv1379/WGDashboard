@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import {computed, ref} from "vue";
+import {computed, onMounted, ref} from "vue";
 import {axiosPost, requestURl} from "@/utilities/request.js";
 const email = ref("")
 const loading = ref(false)
 const verifyCode = ref(false)
 import {clientStore} from "@/stores/clientStore.js";
-import {useRouter} from "vue-router";
+import {useRoute, useRouter} from "vue-router";
 const store = clientStore()
 const resendInterval = ref(undefined)
 const resendCountdown = ref(120)
@@ -30,11 +30,10 @@ const requestToken = async (e) => {
 
 const code = ref("")
 const parseCode = () => {
-	code.value = code.value.replace(/\D/i, "")
-	code.value = code.value.slice(0, 6)
+	code.value = code.value.trim().slice(0, 128)
 }
 const codeReady = computed(() => {
-	return /^[0-9]{6}$/.test(code.value)
+	return /^[A-Za-z0-9_-]{6,128}$/.test(code.value)
 })
 const codeValidated = ref(false)
 const validateCode = async (e) => {
@@ -58,6 +57,7 @@ const passwordReady = computed(() => {
 	return password.value && confirmPassword.value && password.value === confirmPassword.value
 })
 const router = useRouter()
+const route = useRoute()
 const resetPassword = async (e) => {
 	if (e) e.preventDefault()
 	loading.value = true;
@@ -73,6 +73,16 @@ const resetPassword = async (e) => {
 		await router.push('/signin')
 	}
 }
+
+onMounted(async () => {
+	const linkedEmail = typeof route.query.email === 'string' ? route.query.email : ''
+	const linkedToken = typeof route.query.token === 'string' ? route.query.token : ''
+	if (!linkedEmail || !linkedToken) return
+	email.value = linkedEmail
+	code.value = linkedToken
+	verifyCode.value = true
+	if (codeReady.value) await validateCode()
+})
 </script>
 
 <template>
@@ -122,7 +132,7 @@ const resetPassword = async (e) => {
 			</a>
 			<div class="text-center">
 				<h1 class="display-4">Almost there</h1>
-				<p class="text-muted">Enter the code you received below to retrieve a reset your password</p>
+				<p class="text-muted">Enter the verification token you received below to reset your password</p>
 				<p class="text-muted" v-if="resendCountdown > 0">Didn't get the code? Maybe check your Spam/Junk mailbox. You can get another code in {{ resendCountdown }} seconds.</p>
 				<a role="button"
 				   :class="{disabled: loading}"
@@ -131,7 +141,6 @@ const resetPassword = async (e) => {
 			<form class="mt-4 d-flex flex-column gap-3" @submit="e => validateCode(e)">
 				<div class="form-floating">
 					<input type="text"
-					       inputmode="numeric"
 					       required
 					       :disabled="loading"
 					       v-model="code"
@@ -141,7 +150,7 @@ const resetPassword = async (e) => {
 					       class="form-control rounded-3 border-0" id="token" placeholder="token">
 					<label for="email" class="d-flex">
 						<i class="bi bi-person-circle me-2"></i>
-						6 Digits Verification Code
+						Verification Token
 					</label>
 				</div>
 				<button

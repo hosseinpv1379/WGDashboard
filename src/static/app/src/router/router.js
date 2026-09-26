@@ -133,6 +133,12 @@ const router = createRouter({
 					},
 					children: [
 						{
+							name: "Commercial Users",
+							path: 'users',
+							component: () => import("@/views/commercial/users.vue"),
+							meta: {title: "Users"}
+						},
+						{
 							name: "Nodes",
 							path: 'nodes',
 							component: () => import("@/views/commercial/nodes.vue"),
@@ -143,6 +149,12 @@ const router = createRouter({
 							path: 'node-groups',
 							component: () => import("@/views/commercial/nodeGroups.vue"),
 							meta: {title: "Node Groups"}
+						},
+						{
+							name: "Outbounds",
+							path: 'outbounds',
+							component: () => import("@/views/commercial/outbounds.vue"),
+							meta: {title: "Outbounds"}
 						},
 						{
 							name: "Packages",
@@ -233,36 +245,43 @@ router.beforeEach(async (to, from, next) => {
 		document.title = "WGDashboard"
 	}
 	dashboardConfigurationStore.ShowNavBar = false;
-	document.querySelector(".loadingBar").classList.remove("loadingDone")
-	document.querySelector(".loadingBar").classList.add("loading")
-	if (to.meta.requiresAuth){
-		if (!dashboardConfigurationStore.getActiveCrossServer()){
-			if (await checkAuth()){
-				await dashboardConfigurationStore.getConfiguration()
-				if (!wireguardConfigurationsStore.Configurations && to.name !== "Configuration List"){
-					await wireguardConfigurationsStore.getConfigurations();
-				}
-				dashboardConfigurationStore.Redirect = undefined;
-				next()
-			}else{
-				dashboardConfigurationStore.Redirect = to;
-				next("/signin")
-				dashboardConfigurationStore.newMessage("WGDashboard", "Sign in session ended, please sign in again", "warning")
-			}
-		}else{
-			await dashboardConfigurationStore.getConfiguration()
-			if (!wireguardConfigurationsStore.Configurations && to.name !== "Configuration List"){
-				await wireguardConfigurationsStore.getConfigurations();
-			}
-			next()
-		}
-	}else {
+	const loadingBar = document.querySelector(".loadingBar")
+	loadingBar?.classList.remove("loadingDone")
+	loadingBar?.classList.add("loading")
+	if (!to.meta.requiresAuth) {
 		next()
+		return
+	}
+
+	try {
+		const remoteServer = dashboardConfigurationStore.getActiveCrossServer()
+		if (!remoteServer && !(await checkAuth())) {
+			dashboardConfigurationStore.Redirect = to;
+			dashboardConfigurationStore.newMessage("WGDashboard", "Sign in session ended, please sign in again", "warning")
+			next("/signin")
+			return
+		}
+
+		if (!(await dashboardConfigurationStore.getConfiguration())) {
+			dashboardConfigurationStore.newMessage("WGDashboard", "Dashboard configuration could not be loaded", "danger")
+			next("/signin")
+			return
+		}
+		if (!wireguardConfigurationsStore.ConfigurationLoaded && to.name !== "Configuration List") {
+			await wireguardConfigurationsStore.getConfigurations();
+		}
+		dashboardConfigurationStore.Redirect = undefined;
+		next()
+	} catch (error) {
+		console.error("Navigation failed", error)
+		dashboardConfigurationStore.newMessage("WGDashboard", "Dashboard failed to initialize", "danger")
+		next("/signin")
 	}
 });
 
 router.afterEach(() => {
-	document.querySelector(".loadingBar").classList.remove("loading")
-	document.querySelector(".loadingBar").classList.add("loadingDone")
+	const loadingBar = document.querySelector(".loadingBar")
+	loadingBar?.classList.remove("loading")
+	loadingBar?.classList.add("loadingDone")
 })
 export default router

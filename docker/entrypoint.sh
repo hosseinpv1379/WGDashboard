@@ -203,6 +203,7 @@ set_envvars() {
 
   set_ini Peers remote_endpoint "${public_ip}"
   set_ini Server app_port "${wgd_port}"
+  [[ -n "${dashboard_language:-}" ]] && set_ini Server dashboard_language "${dashboard_language}"
 
   # Account settings - process all parameters
   [[ -n "$username" ]] && echo "Configuring user account:"

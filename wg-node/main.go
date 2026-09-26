@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"net"
@@ -25,28 +26,56 @@ import (
 	"time"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 type Config struct {
-	PanelURL             string
-	NodeID               string
-	NodeToken            string
-	BootstrapToken       string
-	NodeName             string
-	Region               string
-	PublicEndpoint       string
-	AddressPool          string
-	DefaultInterface     string
-	Capacity             int
-	PollInterval         time.Duration
-	ReportInterval       time.Duration
-	StatePath            string
-	CredentialsPath      string
-	CACertificatePath    string
+	PanelURL              string
+	NodeID                string
+	NodeToken             string
+	BootstrapToken        string
+	NodeName              string
+	Region                string
+	PublicEndpoint        string
+	AddressPool           string
+	DefaultInterface      string
+	Capacity              int
+	PollInterval          time.Duration
+	ReportInterval        time.Duration
+	StatePath             string
+	CredentialsPath       string
+	CACertificatePath     string
 	ClientCertificatePath string
-	ClientKeyPath          string
-	InsecureTLS            bool
-	EnablePreshared        bool
+	ClientKeyPath         string
+	InsecureTLS           bool
+	EnablePreshared       bool
+	OutboundDirectory     string
+	InterfacePools        map[string]string
+	InterfaceEndpoints    map[string]string
+}
+
+type FileConfig struct {
+	PanelURL              string            `json:"panel_url"`
+	NodeID                string            `json:"node_id"`
+	NodeToken             string            `json:"node_token"`
+	BootstrapToken        string            `json:"bootstrap_token"`
+	NodeName              string            `json:"node_name"`
+	Region                string            `json:"region"`
+	PublicEndpoint        string            `json:"public_endpoint"`
+	AddressPool           string            `json:"address_pool"`
+	DefaultInterface      string            `json:"default_interface"`
+	Capacity              int               `json:"capacity"`
+	PollSeconds           int               `json:"poll_seconds"`
+	ReportSeconds         int               `json:"report_seconds"`
+	StatePath             string            `json:"state_path"`
+	CredentialsPath       string            `json:"credentials_path"`
+	CACertificatePath     string            `json:"ca_certificate"`
+	ClientCertificatePath string            `json:"client_certificate"`
+	ClientKeyPath         string            `json:"client_key"`
+	InsecureTLS           bool              `json:"insecure_tls"`
+	EnablePreshared       *bool             `json:"enable_preshared"`
+	OutboundDirectory     string            `json:"outbound_directory"`
+	InterfacePools        map[string]string `json:"interface_pools"`
+	InterfaceEndpoints    map[string]string `json:"interface_endpoints"`
 }
 
 type APIResponse[T any] struct {
@@ -75,10 +104,19 @@ type PeerState struct {
 	Enabled            bool   `json:"enabled"`
 }
 
+type OutboundState struct {
+	OutboundID        string `json:"outbound_id"`
+	Interface         string `json:"interface"`
+	SourceInterface   string `json:"source_interface"`
+	SourceAddressPool string `json:"source_address_pool"`
+	RoutingTable      int    `json:"routing_table"`
+}
+
 type PersistentState struct {
-	SessionID string                `json:"session_id"`
-	Sequence  int64                 `json:"sequence"`
-	Peers     map[string]*PeerState `json:"peers"`
+	SessionID string                    `json:"session_id"`
+	Sequence  int64                     `json:"sequence"`
+	Peers     map[string]*PeerState     `json:"peers"`
+	Outbounds map[string]*OutboundState `json:"outbounds"`
 }
 
 type Agent struct {
@@ -116,29 +154,65 @@ func main() {
 }
 
 func loadConfig() (Config, error) {
-	capacity, _ := strconv.Atoi(env("WG_NODE_CAPACITY", "0"))
-	pollSeconds, _ := strconv.Atoi(env("WG_NODE_POLL_SECONDS", "5"))
-	reportSeconds, _ := strconv.Atoi(env("WG_NODE_REPORT_SECONDS", "15"))
+	fileConfig, err := loadFileConfig(env("WG_NODE_CONFIG", "/etc/wg-node/config.json"))
+	if err != nil {
+		return Config{}, err
+	}
+	capacity, _ := strconv.Atoi(env("WG_NODE_CAPACITY", strconv.Itoa(fileConfig.Capacity)))
+	pollFallback := fileConfig.PollSeconds
+	if pollFallback < 1 {
+		pollFallback = 5
+	}
+	reportFallback := fileConfig.ReportSeconds
+	if reportFallback < 1 {
+		reportFallback = 15
+	}
+	pollSeconds, _ := strconv.Atoi(env("WG_NODE_POLL_SECONDS", strconv.Itoa(pollFallback)))
+	reportSeconds, _ := strconv.Atoi(env("WG_NODE_REPORT_SECONDS", strconv.Itoa(reportFallback)))
+	enablePreshared := true
+	if fileConfig.EnablePreshared != nil {
+		enablePreshared = *fileConfig.EnablePreshared
+	}
+	if value := os.Getenv("WG_NODE_PRESHARED_KEY"); value != "" {
+		enablePreshared = !strings.EqualFold(value, "false")
+	}
+	insecureTLS := fileConfig.InsecureTLS
+	if value := os.Getenv("WG_NODE_INSECURE_TLS"); value != "" {
+		insecureTLS = strings.EqualFold(value, "true")
+	}
 	config := Config{
-		PanelURL:             strings.TrimRight(os.Getenv("WG_PANEL_URL"), "/"),
-		NodeID:               os.Getenv("WG_NODE_ID"),
-		NodeToken:            os.Getenv("WG_NODE_TOKEN"),
-		BootstrapToken:       os.Getenv("WG_NODE_BOOTSTRAP_TOKEN"),
-		NodeName:             env("WG_NODE_NAME", hostname()),
-		Region:               os.Getenv("WG_NODE_REGION"),
-		PublicEndpoint:       os.Getenv("WG_NODE_PUBLIC_ENDPOINT"),
-		AddressPool:          env("WG_NODE_ADDRESS_POOL", "10.88.0.0/24"),
-		DefaultInterface:     env("WG_NODE_INTERFACE", "wg0"),
-		Capacity:             capacity,
-		PollInterval:         time.Duration(max(1, pollSeconds)) * time.Second,
-		ReportInterval:       time.Duration(max(5, reportSeconds)) * time.Second,
-		StatePath:            env("WG_NODE_STATE", "/var/lib/wg-node/state.json"),
-		CredentialsPath:      env("WG_NODE_CREDENTIALS", "/var/lib/wg-node/credentials.json"),
-		CACertificatePath:    os.Getenv("WG_NODE_CA_CERT"),
-		ClientCertificatePath: os.Getenv("WG_NODE_CLIENT_CERT"),
-		ClientKeyPath:          os.Getenv("WG_NODE_CLIENT_KEY"),
-		InsecureTLS:            strings.EqualFold(os.Getenv("WG_NODE_INSECURE_TLS"), "true"),
-		EnablePreshared:        !strings.EqualFold(os.Getenv("WG_NODE_PRESHARED_KEY"), "false"),
+		PanelURL:              strings.TrimRight(env("WG_PANEL_URL", fileConfig.PanelURL), "/"),
+		NodeID:                env("WG_NODE_ID", fileConfig.NodeID),
+		NodeToken:             env("WG_NODE_TOKEN", fileConfig.NodeToken),
+		BootstrapToken:        env("WG_NODE_BOOTSTRAP_TOKEN", fileConfig.BootstrapToken),
+		NodeName:              env("WG_NODE_NAME", first(fileConfig.NodeName, hostname())),
+		Region:                env("WG_NODE_REGION", fileConfig.Region),
+		PublicEndpoint:        env("WG_NODE_PUBLIC_ENDPOINT", fileConfig.PublicEndpoint),
+		AddressPool:           env("WG_NODE_ADDRESS_POOL", first(fileConfig.AddressPool, "10.88.0.0/24")),
+		DefaultInterface:      env("WG_NODE_INTERFACE", first(fileConfig.DefaultInterface, "wg0")),
+		Capacity:              capacity,
+		PollInterval:          time.Duration(max(1, pollSeconds)) * time.Second,
+		ReportInterval:        time.Duration(max(5, reportSeconds)) * time.Second,
+		StatePath:             env("WG_NODE_STATE", first(fileConfig.StatePath, "/var/lib/wg-node/state.json")),
+		CredentialsPath:       env("WG_NODE_CREDENTIALS", first(fileConfig.CredentialsPath, "/var/lib/wg-node/credentials.json")),
+		CACertificatePath:     env("WG_NODE_CA_CERT", fileConfig.CACertificatePath),
+		ClientCertificatePath: env("WG_NODE_CLIENT_CERT", fileConfig.ClientCertificatePath),
+		ClientKeyPath:         env("WG_NODE_CLIENT_KEY", fileConfig.ClientKeyPath),
+		InsecureTLS:           insecureTLS,
+		EnablePreshared:       enablePreshared,
+		OutboundDirectory:     env("WG_NODE_OUTBOUND_DIR", first(fileConfig.OutboundDirectory, "/etc/wg-node/outbounds")),
+		InterfacePools:        fileConfig.InterfacePools,
+		InterfaceEndpoints:    fileConfig.InterfaceEndpoints,
+	}
+	if config.InterfacePools == nil {
+		config.InterfacePools = map[string]string{}
+	}
+	if config.InterfaceEndpoints == nil {
+		config.InterfaceEndpoints = map[string]string{}
+	}
+	config.InterfacePools[config.DefaultInterface] = config.AddressPool
+	if _, exists := config.InterfaceEndpoints[config.DefaultInterface]; !exists {
+		config.InterfaceEndpoints[config.DefaultInterface] = config.PublicEndpoint
 	}
 	if config.PanelURL == "" {
 		return Config{}, errors.New("WG_PANEL_URL is required")
@@ -146,11 +220,42 @@ func loadConfig() (Config, error) {
 	if config.PublicEndpoint == "" {
 		return Config{}, errors.New("WG_NODE_PUBLIC_ENDPOINT is required, for example vpn.example.com:51820")
 	}
+	if !validEndpoint(config.PublicEndpoint) {
+		return Config{}, errors.New("WG_NODE_PUBLIC_ENDPOINT must include a valid host and port")
+	}
 	if !interfacePattern.MatchString(config.DefaultInterface) {
 		return Config{}, errors.New("WG_NODE_INTERFACE is invalid")
 	}
 	if _, _, err := net.ParseCIDR(config.AddressPool); err != nil {
 		return Config{}, fmt.Errorf("invalid WG_NODE_ADDRESS_POOL: %w", err)
+	}
+	for interfaceName, addressPool := range config.InterfacePools {
+		if !interfacePattern.MatchString(interfaceName) {
+			return Config{}, fmt.Errorf("invalid interface_pools name %q", interfaceName)
+		}
+		if _, network, err := net.ParseCIDR(addressPool); err != nil || network.IP.To4() == nil {
+			return Config{}, fmt.Errorf("interface_pools[%s] must be a valid IPv4 CIDR", interfaceName)
+		}
+	}
+	for interfaceName, endpoint := range config.InterfaceEndpoints {
+		if !interfacePattern.MatchString(interfaceName) || !validEndpoint(endpoint) {
+			return Config{}, fmt.Errorf("interface_endpoints[%s] must contain a valid host and port", interfaceName)
+		}
+	}
+	return config, nil
+}
+
+func loadFileConfig(path string) (FileConfig, error) {
+	var config FileConfig
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return config, nil
+	}
+	if err != nil {
+		return config, fmt.Errorf("read node configuration: %w", err)
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return config, fmt.Errorf("invalid node configuration: %w", err)
 	}
 	return config, nil
 }
@@ -184,16 +289,20 @@ func buildHTTPClient(config Config) (*http.Client, error) {
 	return &http.Client{
 		Timeout: 20 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig:     tlsConfig,
-			MaxIdleConns:        10,
-			IdleConnTimeout:     30 * time.Second,
-			DisableCompression:  false,
+			TLSClientConfig:    tlsConfig,
+			MaxIdleConns:       10,
+			IdleConnTimeout:    30 * time.Second,
+			DisableCompression: false,
 		},
 	}, nil
 }
 
 func (a *Agent) loadState() error {
-	a.state = PersistentState{SessionID: randomID(), Peers: map[string]*PeerState{}}
+	a.state = PersistentState{
+		SessionID: randomID(),
+		Peers:     map[string]*PeerState{},
+		Outbounds: map[string]*OutboundState{},
+	}
 	data, err := os.ReadFile(a.config.StatePath)
 	if errors.Is(err, os.ErrNotExist) {
 		return a.saveStateLocked()
@@ -206,6 +315,18 @@ func (a *Agent) loadState() error {
 	}
 	if a.state.Peers == nil {
 		a.state.Peers = map[string]*PeerState{}
+	}
+	if a.state.Outbounds == nil {
+		a.state.Outbounds = map[string]*OutboundState{}
+	}
+	for outboundID, outbound := range a.state.Outbounds {
+		if outbound == nil || !interfacePattern.MatchString(outbound.Interface) {
+			delete(a.state.Outbounds, outboundID)
+			continue
+		}
+		if outbound.RoutingTable < 1 {
+			outbound.RoutingTable = routingTable(outbound.Interface)
+		}
 	}
 	a.state.SessionID = randomID()
 	a.state.Sequence = 0
@@ -265,6 +386,8 @@ func (a *Agent) run(ctx context.Context) error {
 	reportTicker := time.NewTicker(a.config.ReportInterval)
 	defer pollTicker.Stop()
 	defer reportTicker.Stop()
+	a.restorePeers(ctx)
+	a.restoreOutbounds(ctx)
 	_ = a.heartbeat(ctx)
 	_ = a.pollJobs(ctx)
 	for {
@@ -286,13 +409,137 @@ func (a *Agent) run(ctx context.Context) error {
 	}
 }
 
+func (a *Agent) restorePeers(ctx context.Context) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for peerID, peer := range a.state.Peers {
+		if peer == nil || !interfacePattern.MatchString(peer.Interface) || !validWireGuardKey(peer.PublicKey) {
+			log.Printf("restore peer %s: invalid persisted peer state", peerID)
+			continue
+		}
+		if peer.Enabled {
+			if err := setPeer(ctx, peer); err != nil {
+				log.Printf("restore peer %s: %v", peerID, err)
+			}
+			continue
+		}
+		if _, err := command(ctx, "wg", "set", peer.Interface, "peer", peer.PublicKey, "remove"); err != nil {
+			log.Printf("restore disabled peer %s: %v", peerID, err)
+			continue
+		}
+		if _, err := command(ctx, "wg-quick", "save", peer.Interface); err != nil {
+			log.Printf("persist disabled peer %s: %v", peerID, err)
+		}
+	}
+}
+
+func (a *Agent) restoreOutbounds(ctx context.Context) {
+	for outboundID, state := range a.state.Outbounds {
+		if state == nil || !interfacePattern.MatchString(state.Interface) {
+			log.Printf("restore outbound %s: invalid persisted outbound state", outboundID)
+			continue
+		}
+		path := filepath.Join(a.config.OutboundDirectory, state.Interface+".conf")
+		if _, err := os.Stat(path); err != nil {
+			log.Printf("restore outbound %s: %v", outboundID, err)
+			continue
+		}
+		if _, err := command(ctx, "wg", "show", state.Interface); err != nil {
+			if _, err := command(ctx, "wg-quick", "up", path); err != nil {
+				log.Printf("restore outbound %s: %v", outboundID, err)
+				continue
+			}
+		}
+		if err := configureOutboundRouting(ctx, state); err != nil {
+			log.Printf("restore outbound routing %s: %v", outboundID, err)
+		}
+	}
+}
+
 func (a *Agent) heartbeat(ctx context.Context) error {
 	payload := map[string]any{
 		"agent_version": version, "public_endpoint": a.config.PublicEndpoint,
-		"capacity": a.config.Capacity,
+		"capacity": a.config.Capacity, "agent_session": a.state.SessionID,
+		"interfaces": a.discoverInterfaces(ctx), "peers": a.peerInventory(),
+		"outbounds": a.outboundInventory(),
 	}
 	var response APIResponse[map[string]any]
 	return a.request(ctx, http.MethodPost, "/api/node/v1/heartbeat", a.config.NodeToken, payload, &response)
+}
+
+func (a *Agent) peerInventory() []map[string]any {
+	peers := make([]map[string]any, 0, len(a.state.Peers))
+	for _, peer := range a.state.Peers {
+		peers = append(peers, map[string]any{
+			"subscription_peer_id": peer.SubscriptionPeerID,
+			"interface":            peer.Interface,
+			"public_key":           peer.PublicKey,
+			"address":              peer.Address,
+			"enabled":              peer.Enabled,
+		})
+	}
+	return peers
+}
+
+func (a *Agent) outboundInventory() []map[string]any {
+	outbounds := make([]map[string]any, 0, len(a.state.Outbounds))
+	for _, outbound := range a.state.Outbounds {
+		outbounds = append(outbounds, map[string]any{
+			"outbound_id": outbound.OutboundID, "interface": outbound.Interface,
+			"source_interface":    outbound.SourceInterface,
+			"source_address_pool": outbound.SourceAddressPool,
+		})
+	}
+	return outbounds
+}
+
+func (a *Agent) discoverInterfaces(ctx context.Context) []map[string]any {
+	output, err := command(ctx, "wg", "show", "interfaces")
+	if err != nil {
+		log.Printf("interface discovery: %v", err)
+		return []map[string]any{}
+	}
+	outboundInterfaces := map[string]bool{}
+	for _, outbound := range a.state.Outbounds {
+		outboundInterfaces[outbound.Interface] = true
+	}
+	interfaces := make([]map[string]any, 0)
+	for _, interfaceName := range strings.Fields(output) {
+		if !interfacePattern.MatchString(interfaceName) || outboundInterfaces[interfaceName] {
+			continue
+		}
+		publicKey, keyErr := command(ctx, "wg", "show", interfaceName, "public-key")
+		listenPort, portErr := command(ctx, "wg", "show", interfaceName, "listen-port")
+		addressPool := a.config.InterfacePools[interfaceName]
+		if addressPool == "" {
+			if addressOutput, addressErr := command(ctx, "ip", "-o", "-4", "addr", "show", "dev", interfaceName); addressErr == nil {
+				for _, field := range strings.Fields(addressOutput) {
+					if _, network, parseErr := net.ParseCIDR(field); parseErr == nil {
+						addressPool = network.String()
+						break
+					}
+				}
+			}
+		}
+		if addressPool == "" && interfaceName == a.config.DefaultInterface {
+			addressPool = a.config.AddressPool
+		}
+		endpoint := a.config.InterfaceEndpoints[interfaceName]
+		if endpoint == "" && interfaceName == a.config.DefaultInterface {
+			endpoint = a.config.PublicEndpoint
+		}
+		port, _ := strconv.Atoi(strings.TrimSpace(listenPort))
+		status := "up"
+		if keyErr != nil || portErr != nil {
+			status = "error"
+		}
+		interfaces = append(interfaces, map[string]any{
+			"name": interfaceName, "address_pool": addressPool,
+			"public_endpoint": endpoint, "public_key": strings.TrimSpace(publicKey),
+			"listen_port": port, "status": status,
+		})
+	}
+	return interfaces
 }
 
 func (a *Agent) pollJobs(ctx context.Context) error {
@@ -327,6 +574,10 @@ func (a *Agent) executeJob(ctx context.Context, job Job) (map[string]any, error)
 		return nil, a.disablePeer(ctx, job.Payload, false)
 	case "DELETE_PEER":
 		return nil, a.disablePeer(ctx, job.Payload, true)
+	case "APPLY_OUTBOUND":
+		return nil, a.applyOutbound(ctx, job.Payload)
+	case "REMOVE_OUTBOUND":
+		return nil, a.removeOutbound(ctx, job.Payload)
 	default:
 		return nil, fmt.Errorf("unsupported operation %q", job.Operation)
 	}
@@ -342,9 +593,19 @@ func (a *Agent) createPeer(ctx context.Context, payload map[string]any) (map[str
 	if peerID == "" || !validWireGuardKey(publicKey) || !interfacePattern.MatchString(interfaceName) {
 		return nil, errors.New("invalid CREATE_PEER payload")
 	}
+	address := stringValue(payload, "address")
+	desiredPresharedKey := stringValue(payload, "preshared_key")
+	if desiredPresharedKey != "" && !validWireGuardKey(desiredPresharedKey) {
+		return nil, errors.New("CREATE_PEER contains an invalid preshared key")
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if existing := a.state.Peers[peerID]; existing != nil {
+		if existing.PublicKey != publicKey || existing.Interface != interfaceName ||
+			(address != "" && existing.Address != address) ||
+			(desiredPresharedKey != "" && existing.PresharedKey != desiredPresharedKey) {
+			return nil, errors.New("CREATE_PEER conflicts with existing local peer state")
+		}
 		// CREATE_PEER is idempotent. Re-apply the peer as well so a restored
 		// agent state can repair a WireGuard interface that lost its runtime state.
 		if err := setPeer(ctx, existing); err != nil {
@@ -363,12 +624,19 @@ func (a *Agent) createPeer(ctx context.Context, payload map[string]any) (map[str
 	if _, err := command(ctx, "wg", "show", interfaceName); err != nil {
 		return nil, fmt.Errorf("WireGuard interface %s is unavailable: %w", interfaceName, err)
 	}
-	address, err := a.allocateAddress(ctx, interfaceName)
-	if err != nil {
-		return nil, err
+	var err error
+	if address != "" {
+		if err := a.validateDesiredAddress(ctx, peerID, publicKey, interfaceName, address); err != nil {
+			return nil, err
+		}
+	} else {
+		address, err = a.allocateAddress(ctx, interfaceName)
+		if err != nil {
+			return nil, err
+		}
 	}
-	presharedKey := ""
-	if a.config.EnablePreshared {
+	presharedKey := desiredPresharedKey
+	if presharedKey == "" && a.config.EnablePreshared {
 		presharedKey, err = command(ctx, "wg", "genpsk")
 		if err != nil {
 			return nil, err
@@ -394,10 +662,63 @@ func (a *Agent) createPeer(ctx context.Context, payload map[string]any) (map[str
 	return a.peerResult(peer, strings.TrimSpace(serverKey)), nil
 }
 
+func (a *Agent) validateDesiredAddress(ctx context.Context, peerID, publicKey, interfaceName, address string) error {
+	addressPool := a.config.InterfacePools[interfaceName]
+	if addressPool == "" {
+		addressPool = a.config.AddressPool
+	}
+	ip, _, err := net.ParseCIDR(address)
+	if err != nil || ip.To4() == nil {
+		return errors.New("requested peer address is not a valid IPv4 CIDR")
+	}
+	_, network, err := net.ParseCIDR(addressPool)
+	if err != nil || !network.Contains(ip) {
+		return errors.New("requested peer address is outside the interface pool")
+	}
+	for existingID, peer := range a.state.Peers {
+		if existingID != peerID && peer.Interface == interfaceName && strings.Split(peer.Address, "/")[0] == ip.String() {
+			return errors.New("requested peer address is already assigned")
+		}
+	}
+	if output, err := command(ctx, "wg", "show", interfaceName, "allowed-ips"); err == nil {
+		for _, line := range strings.Split(output, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[0] == publicKey {
+				continue
+			}
+			for _, allowedIP := range strings.Split(fields[1], ",") {
+				if strings.Split(allowedIP, "/")[0] == ip.String() {
+					return errors.New("requested peer address is already present on the interface")
+				}
+			}
+		}
+	}
+	if ip.Equal(network.IP) {
+		return errors.New("requested peer address is the network address")
+	}
+	firstHost := append(net.IP(nil), network.IP.To4()...)
+	incrementIP(firstHost)
+	if ip.Equal(firstHost) {
+		return errors.New("requested peer address is reserved for the WireGuard interface")
+	}
+	broadcast := make(net.IP, net.IPv4len)
+	for index := range broadcast {
+		broadcast[index] = network.IP.To4()[index] | ^network.Mask[index]
+	}
+	if ip.Equal(broadcast) {
+		return errors.New("requested peer address is the broadcast address")
+	}
+	return nil
+}
+
 func (a *Agent) peerResult(peer *PeerState, serverKey string) map[string]any {
+	endpoint := a.config.InterfaceEndpoints[peer.Interface]
+	if endpoint == "" {
+		endpoint = a.config.PublicEndpoint
+	}
 	return map[string]any{
 		"address": peer.Address, "server_public_key": serverKey,
-		"preshared_key": peer.PresharedKey, "endpoint": a.config.PublicEndpoint,
+		"preshared_key": peer.PresharedKey, "endpoint": endpoint,
 	}
 }
 
@@ -484,7 +805,11 @@ func hostRoute(address string) (string, error) {
 }
 
 func (a *Agent) allocateAddress(ctx context.Context, interfaceName string) (string, error) {
-	_, network, err := net.ParseCIDR(a.config.AddressPool)
+	addressPool := a.config.InterfacePools[interfaceName]
+	if addressPool == "" {
+		addressPool = a.config.AddressPool
+	}
+	_, network, err := net.ParseCIDR(addressPool)
 	if err != nil || network.IP.To4() == nil {
 		return "", errors.New("only an IPv4 WG_NODE_ADDRESS_POOL is currently supported")
 	}
@@ -522,6 +847,227 @@ func (a *Agent) allocateAddress(ctx context.Context, interfaceName string) (stri
 		return fmt.Sprintf("%s/%d", ip.String(), ones), nil
 	}
 	return "", errors.New("address pool is exhausted")
+}
+
+func (a *Agent) applyOutbound(ctx context.Context, payload map[string]any) error {
+	outboundID := stringValue(payload, "outbound_id")
+	interfaceName := stringValue(payload, "interface")
+	sourceInterface := stringValue(payload, "source_interface")
+	sourcePool := stringValue(payload, "source_address_pool")
+	configuration := stringValue(payload, "configuration")
+	if outboundID == "" || !interfacePattern.MatchString(interfaceName) ||
+		!interfacePattern.MatchString(sourceInterface) || interfaceName == sourceInterface {
+		return errors.New("invalid outbound payload")
+	}
+	if _, network, err := net.ParseCIDR(sourcePool); err != nil || network.IP.To4() == nil {
+		return errors.New("outbound source_address_pool must be a valid IPv4 network")
+	}
+	if _, err := command(ctx, "wg", "show", sourceInterface); err != nil {
+		return fmt.Errorf("source interface %s is unavailable: %w", sourceInterface, err)
+	}
+	sanitized, err := sanitizeOutboundConfig(configuration)
+	if err != nil {
+		return err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	table := routingTable(interfaceName)
+	for existingID, existing := range a.state.Outbounds {
+		if existingID != outboundID && existing != nil && existing.RoutingTable == table {
+			return fmt.Errorf(
+				"outbound routing table collision between %s and %s; choose another interface name",
+				interfaceName, existing.Interface,
+			)
+		}
+	}
+	if previous := a.state.Outbounds[outboundID]; previous != nil {
+		a.cleanupOutbound(ctx, previous)
+	}
+	if err := os.MkdirAll(a.config.OutboundDirectory, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(a.config.OutboundDirectory, interfaceName+".conf")
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, []byte(sanitized), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return err
+	}
+	_, _ = command(ctx, "wg-quick", "down", path)
+	if _, err := command(ctx, "wg-quick", "up", path); err != nil {
+		return err
+	}
+	state := &OutboundState{
+		OutboundID: outboundID, Interface: interfaceName, SourceInterface: sourceInterface,
+		SourceAddressPool: sourcePool, RoutingTable: table,
+	}
+	if err := configureOutboundRouting(ctx, state); err != nil {
+		a.cleanupOutbound(ctx, state)
+		return err
+	}
+	a.state.Outbounds[outboundID] = state
+	return a.saveStateLocked()
+}
+
+func (a *Agent) removeOutbound(ctx context.Context, payload map[string]any) error {
+	outboundID := stringValue(payload, "outbound_id")
+	if outboundID == "" {
+		return errors.New("outbound_id is required")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	state := a.state.Outbounds[outboundID]
+	if state == nil {
+		interfaceName := stringValue(payload, "interface")
+		if !interfacePattern.MatchString(interfaceName) {
+			return nil
+		}
+		state = &OutboundState{
+			OutboundID: outboundID, Interface: interfaceName,
+			SourceInterface:   stringValue(payload, "source_interface"),
+			SourceAddressPool: stringValue(payload, "source_address_pool"),
+			RoutingTable:      routingTable(interfaceName),
+		}
+	}
+	a.cleanupOutbound(ctx, state)
+	delete(a.state.Outbounds, outboundID)
+	return a.saveStateLocked()
+}
+
+func (a *Agent) cleanupOutbound(ctx context.Context, state *OutboundState) {
+	if state == nil || !interfacePattern.MatchString(state.Interface) {
+		return
+	}
+	if state.RoutingTable < 1 {
+		state.RoutingTable = routingTable(state.Interface)
+	}
+	if state.SourceAddressPool != "" {
+		_, _ = command(ctx, "ip", "rule", "del", "from", state.SourceAddressPool, "table", strconv.Itoa(state.RoutingTable), "priority", strconv.Itoa(state.RoutingTable))
+	}
+	_, _ = command(ctx, "ip", "route", "flush", "table", strconv.Itoa(state.RoutingTable))
+	if state.SourceAddressPool != "" {
+		deleteIptablesRule(ctx, "nat", "POSTROUTING", "-s", state.SourceAddressPool, "-o", state.Interface, "-j", "MASQUERADE")
+		if interfacePattern.MatchString(state.SourceInterface) {
+			deleteIptablesRule(ctx, "filter", "FORWARD", "-i", state.SourceInterface, "-o", state.Interface, "-s", state.SourceAddressPool, "-j", "ACCEPT")
+			deleteIptablesRule(ctx, "filter", "FORWARD", "-i", state.Interface, "-o", state.SourceInterface, "-d", state.SourceAddressPool, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
+		}
+	}
+	path := filepath.Join(a.config.OutboundDirectory, state.Interface+".conf")
+	_, _ = command(ctx, "wg-quick", "down", path)
+	_ = os.Remove(path)
+}
+
+func configureOutboundRouting(ctx context.Context, state *OutboundState) error {
+	table := strconv.Itoa(state.RoutingTable)
+	_, _ = command(ctx, "ip", "rule", "del", "from", state.SourceAddressPool, "table", table, "priority", table)
+	if _, err := command(ctx, "ip", "route", "replace", "default", "dev", state.Interface, "table", table); err != nil {
+		return err
+	}
+	if _, err := command(ctx, "ip", "rule", "add", "from", state.SourceAddressPool, "table", table, "priority", table); err != nil {
+		return err
+	}
+	if err := ensureIptablesRule(ctx, "nat", "POSTROUTING", "-s", state.SourceAddressPool, "-o", state.Interface, "-j", "MASQUERADE"); err != nil {
+		return err
+	}
+	if err := ensureIptablesRule(ctx, "filter", "FORWARD", "-i", state.SourceInterface, "-o", state.Interface, "-s", state.SourceAddressPool, "-j", "ACCEPT"); err != nil {
+		return err
+	}
+	return ensureIptablesRule(ctx, "filter", "FORWARD", "-i", state.Interface, "-o", state.SourceInterface, "-d", state.SourceAddressPool, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
+}
+
+func sanitizeOutboundConfig(configuration string) (string, error) {
+	if len(configuration) == 0 || len(configuration) > 64*1024 {
+		return "", errors.New("outbound WireGuard configuration is empty or too large")
+	}
+	blocked := map[string]bool{
+		"preup": true, "postup": true, "predown": true, "postdown": true,
+		"saveconfig": true, "table": true, "dns": true,
+	}
+	lines := strings.Split(strings.ReplaceAll(configuration, "\r\n", "\n"), "\n")
+	clean := make([]string, 0, len(lines)+1)
+	interfaceSeen, peerSeen, privateKeySeen := false, false, false
+	publicKeySeen, endpointSeen, defaultRouteSeen := false, false, false
+	section := ""
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.ToLower(strings.TrimSpace(strings.Trim(line, "[]")))
+			if section != "interface" && section != "peer" {
+				return "", fmt.Errorf("unsupported WireGuard section %q", section)
+			}
+			interfaceSeen = interfaceSeen || section == "interface"
+			peerSeen = peerSeen || section == "peer"
+			clean = append(clean, rawLine)
+			continue
+		}
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			clean = append(clean, rawLine)
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			return "", fmt.Errorf("invalid WireGuard configuration line %q", line)
+		}
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
+		value := strings.TrimSpace(parts[1])
+		if blocked[key] {
+			continue
+		}
+		if section == "interface" && key == "privatekey" && validWireGuardKey(value) {
+			privateKeySeen = true
+		}
+		if section == "peer" && key == "publickey" && validWireGuardKey(value) {
+			publicKeySeen = true
+		}
+		if section == "peer" && key == "endpoint" && value != "" {
+			endpointSeen = true
+		}
+		if section == "peer" && key == "allowedips" {
+			for _, cidr := range strings.Split(value, ",") {
+				if strings.TrimSpace(cidr) == "0.0.0.0/0" {
+					defaultRouteSeen = true
+				}
+			}
+		}
+		clean = append(clean, rawLine)
+	}
+	if !interfaceSeen || !peerSeen || !privateKeySeen || !publicKeySeen || !endpointSeen || !defaultRouteSeen {
+		return "", errors.New("outbound config requires Interface/PrivateKey and Peer/PublicKey/Endpoint/AllowedIPs=0.0.0.0/0")
+	}
+	result := make([]string, 0, len(clean)+1)
+	inserted := false
+	for _, line := range clean {
+		if !inserted && strings.EqualFold(strings.TrimSpace(line), "[Interface]") {
+			result = append(result, line, "Table = off")
+			inserted = true
+			continue
+		}
+		result = append(result, line)
+	}
+	return strings.TrimSpace(strings.Join(result, "\n")) + "\n", nil
+}
+
+func routingTable(interfaceName string) int {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(interfaceName))
+	return 20000 + int(hash.Sum32()%10000)
+}
+
+func ensureIptablesRule(ctx context.Context, table, chain string, args ...string) error {
+	check := append([]string{"-t", table, "-C", chain}, args...)
+	if _, err := command(ctx, "iptables", check...); err == nil {
+		return nil
+	}
+	add := append([]string{"-t", table, "-A", chain}, args...)
+	_, err := command(ctx, "iptables", add...)
+	return err
+}
+
+func deleteIptablesRule(ctx context.Context, table, chain string, args ...string) {
+	remove := append([]string{"-t", table, "-D", chain}, args...)
+	_, _ = command(ctx, "iptables", remove...)
 }
 
 func (a *Agent) reportTraffic(ctx context.Context) error {
@@ -565,7 +1111,7 @@ func (a *Agent) reportTraffic(ctx context.Context) error {
 		}
 		samples = append(samples, map[string]any{
 			"subscription_peer_id": peer.SubscriptionPeerID,
-			"session_id": a.state.SessionID, "sequence": a.state.Sequence,
+			"session_id":           a.state.SessionID, "sequence": a.state.Sequence,
 			"rx_bytes": transfer[0], "tx_bytes": transfer[1],
 		})
 	}
@@ -575,8 +1121,14 @@ func (a *Agent) reportTraffic(ctx context.Context) error {
 	if len(samples) == 0 {
 		return nil
 	}
-	var response APIResponse[map[string]any]
-	return a.request(ctx, http.MethodPost, "/api/node/v1/traffic", a.config.NodeToken, map[string]any{"samples": samples}, &response)
+	for start := 0; start < len(samples); start += 500 {
+		end := min(start+500, len(samples))
+		var response APIResponse[map[string]any]
+		if err := a.request(ctx, http.MethodPost, "/api/node/v1/traffic", a.config.NodeToken, map[string]any{"samples": samples[start:end]}, &response); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *Agent) request(ctx context.Context, method, path, token string, body any, destination any) error {
@@ -635,6 +1187,15 @@ func validWireGuardKey(value string) bool {
 	return err == nil && len(decoded) == 32
 }
 
+func validEndpoint(value string) bool {
+	host, portValue, err := net.SplitHostPort(value)
+	if err != nil || strings.TrimSpace(host) == "" || strings.ContainsAny(value, "\r\n\t ") {
+		return false
+	}
+	port, err := strconv.Atoi(portValue)
+	return err == nil && port >= 1 && port <= 65535
+}
+
 func stringValue(payload map[string]any, key string) string {
 	value, _ := payload[key].(string)
 	return value
@@ -666,4 +1227,13 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func first(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

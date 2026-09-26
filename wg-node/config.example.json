@@ -1,0 +1,26 @@
+{
+  "panel_url": "https://panel.example.com",
+  "node_id": "replace-with-node-id",
+  "node_token": "replace-with-node-token",
+  "node_name": "germany-1",
+  "region": "Germany",
+  "public_endpoint": "vpn.example.com:51820",
+  "default_interface": "wg0",
+  "address_pool": "10.88.0.0/24",
+  "capacity": 500,
+  "poll_seconds": 5,
+  "report_seconds": 10,
+  "state_path": "/var/lib/wg-node/state.json",
+  "credentials_path": "/var/lib/wg-node/credentials.json",
+  "outbound_directory": "/etc/wg-node/outbounds",
+  "enable_preshared": true,
+  "insecure_tls": false,
+  "interface_pools": {
+    "wg0": "10.88.0.0/24",
+    "wg1": "10.89.0.0/24"
+  },
+  "interface_endpoints": {
+    "wg0": "vpn.example.com:51820",
+    "wg1": "vpn.example.com:51821"
+  }
+}

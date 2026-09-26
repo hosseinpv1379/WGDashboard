@@ -53,9 +53,9 @@ onMounted(load)
     <div class="card rounded-3 mb-4">
       <div class="card-header bg-transparent"><strong>Create package</strong></div>
       <form class="card-body row g-3" @submit.prevent="createPackage">
-        <div class="col-md-4"><label class="form-label">Package name</label><input v-model.trim="form.name" required class="form-control" placeholder="30 GB / 30 days"></div>
-        <div class="col-md-4"><label class="form-label">Node group</label><select v-model="form.node_group_id" required class="form-select"><option value="" disabled>Select locations</option><option v-for="group in groups" :key="group.NodeGroupID" :disabled="group.Status !== 'active'" :value="group.NodeGroupID">{{ group.Name }} — {{ group.NodeCount }} location(s)</option></select></div>
-        <div class="col-md-2"><label class="form-label">Data (GB)</label><input v-model.number="form.quota_gb" min="0" step="0.1" required type="number" class="form-control"></div>
+        <div class="col-md-4"><label class="form-label">Package name</label><input v-model.trim="form.name" required class="form-control" placeholder="30 GiB / 30 days"></div>
+        <div class="col-md-4"><label class="form-label">Node group</label><select v-model="form.node_group_id" required class="form-select"><option value="" disabled>Select locations</option><option v-for="group in groups" :key="group.NodeGroupID" :disabled="group.Status !== 'active'" :value="group.NodeGroupID">{{ group.Name }} — {{ group.InterfaceCount }} configuration(s)</option></select></div>
+        <div class="col-md-2"><label class="form-label">Data (GiB)</label><input v-model.number="form.quota_gb" min="0" step="0.1" required type="number" class="form-control"></div>
         <div class="col-md-2"><label class="form-label">Duration (days)</label><input v-model.number="form.duration_days" min="0" required type="number" class="form-control"></div>
         <div class="col-md-5"><label class="form-label">Description</label><input v-model.trim="form.description" class="form-control" placeholder="Suitable for two locations"></div>
         <div class="col-md-3"><label class="form-label">Price</label><input v-model.number="form.price" min="0" step="0.01" required type="number" class="form-control"></div>
@@ -75,14 +75,14 @@ onMounted(load)
           </div>
           <div class="card-body row g-2">
             <div class="col-12"><label class="form-label small">Name</label><input v-model.trim="item.Name" class="form-control form-control-sm"></div>
-            <div class="col-6"><label class="form-label small">Data (GB)</label><input v-model.number="item.QuotaGB" min="0" step="0.1" type="number" class="form-control form-control-sm"></div>
+            <div class="col-6"><label class="form-label small">Data (GiB)</label><input v-model.number="item.QuotaGB" min="0" step="0.1" type="number" class="form-control form-control-sm"></div>
             <div class="col-6"><label class="form-label small">Days</label><input v-model.number="item.DurationDays" min="0" type="number" class="form-control form-control-sm"></div>
             <div class="col-6"><label class="form-label small">Price</label><input v-model.number="item.Price" min="0" step="0.01" type="number" class="form-control form-control-sm"></div>
             <div class="col-3"><label class="form-label small">Currency</label><input v-model.trim="item.Currency" class="form-control form-control-sm"></div>
             <div class="col-3"><label class="form-label small">Status</label><select v-model="item.Status" class="form-select form-select-sm"><option value="active">Active</option><option value="disabled">Disabled</option></select></div>
-            <div class="col-12"><label class="form-label small">Node group</label><select v-model="item.NodeGroupID" class="form-select form-select-sm"><option v-for="group in groups" :key="group.NodeGroupID" :value="group.NodeGroupID">{{ group.Name }} — {{ group.NodeCount }} location(s)</option></select></div>
+            <div class="col-12"><label class="form-label small">Node group</label><select v-model="item.NodeGroupID" class="form-select form-select-sm"><option v-for="group in groups" :key="group.NodeGroupID" :value="group.NodeGroupID">{{ group.Name }} — {{ group.InterfaceCount }} configuration(s)</option></select></div>
             <div class="col-12"><label class="form-label small">Description</label><textarea v-model.trim="item.Description" rows="2" class="form-control form-control-sm"></textarea></div>
-            <div class="col-12 d-flex align-items-center mt-3"><span class="small text-muted">{{ money(item.Price) }} {{ item.Currency }} · {{ item.NodeCount }} config(s)</span><button class="btn btn-sm btn-primary ms-auto" @click="updatePackage(item)"><i class="bi bi-save me-2"></i>Save</button></div>
+            <div class="col-12 d-flex align-items-center mt-3"><span class="small text-muted">{{ money(item.Price) }} {{ item.Currency }} · {{ item.InterfaceCount }} config(s) on {{ item.NodeCount }} node(s)</span><button class="btn btn-sm btn-primary ms-auto" @click="updatePackage(item)"><i class="bi bi-save me-2"></i>Save</button></div>
           </div>
         </div>
       </div>

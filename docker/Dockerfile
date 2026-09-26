@@ -162,8 +162,7 @@ RUN export out_adapt=$(ip -o -4 route show to default | awk '{print $NF}') \
 
 # Set a healthcheck to determine the container its health
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD test -s ${WGDASH}/src/gunicorn.pid \
-      && kill -0 "$(cat ${WGDASH}/src/gunicorn.pid)" \
+  CMD curl --fail --silent --show-error http://127.0.0.1:${wgd_port}/healthz >/dev/null \
       || exit 1
 
 # Expose ports on the container

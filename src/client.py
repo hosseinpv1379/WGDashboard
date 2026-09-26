@@ -117,7 +117,7 @@ def createClientBlueprint(wireguardConfigurations: dict[WireguardConfiguration],
         
         status, msg = emailSender.send(
             email, "[WGDashboard | Client] Reset Password",
-            f"Hi {email}, \n\nIt looks like you're trying to reset your password at {date} \n\nEnter this 6 digits code on the Forgot Password to continue:\n\n{token}\n\nThis code will expire in 30 minutes for your security. If you didn’t request a password reset, you can safely ignore this email—your current password will remain unchanged.\n\nIf you need help, feel free to contact support.\n\nBest regards,\n\nWGDashboard"
+            f"Hi {email}, \n\nIt looks like you're trying to reset your password at {date} \n\nEnter this verification token on the Forgot Password page to continue:\n\n{token}\n\nThis token will expire in 30 minutes for your security. If you didn’t request a password reset, you can safely ignore this email—your current password will remain unchanged.\n\nIf you need help, feel free to contact support.\n\nBest regards,\n\nWGDashboard"
         )
         
         return ResponseObject(status, msg)
@@ -207,7 +207,13 @@ def createClientBlueprint(wireguardConfigurations: dict[WireguardConfiguration],
     @client.get(prefix)
     def ClientIndex():
         app_prefix = dashboardConfig.GetConfig("Server", "app_prefix")[1]
-        return render_template('client.html', APP_PREFIX=app_prefix)
+        response = current_app.make_response(
+            render_template('client.html', APP_PREFIX=app_prefix)
+        )
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
     
     @client.get(f'{prefix}/api/serverInformation')
     def ClientAPI_ServerInformation():

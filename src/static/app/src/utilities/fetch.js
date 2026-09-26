@@ -1,5 +1,6 @@
 import {DashboardConfigurationStore} from "@/stores/DashboardConfigurationStore.js";
-import router from "@/router/router.js";
+
+const REQUEST_TIMEOUT_MS = 20000;
 const getHeaders = () => {
 	let headers = {
 		"Content-Type": "application/json"
@@ -47,30 +48,42 @@ const parseResponse = async (response) => {
 	const message = payload?.message || response.statusText || 'Request failed';
 	if (response.status === 401) {
 		store.newMessage('WGDashboard', 'Sign in session ended, please sign in again', 'warning');
-		await router.push({path: '/signin'});
 	} else {
 		store.newMessage('Server', message, 'danger');
 	}
 	throw new Error(message);
 }
 
+const request = async (url, options) => {
+	const controller = new AbortController();
+	const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+	try {
+		return await fetch(url, {...options, signal: controller.signal});
+	} finally {
+		window.clearTimeout(timeout);
+	}
+}
+
 export const fetchGet = async (url, params=undefined, callback=undefined) => {
 	const urlSearchParams = new URLSearchParams(params);
 	try {
-		const response = await fetch(`${getUrl(url)}?${urlSearchParams.toString()}`, {
+		const response = await request(`${getUrl(url)}?${urlSearchParams.toString()}`, {
 			headers: getHeaders()
 		});
 		const payload = await parseResponse(response);
 		return callback ? callback(payload) : payload;
 	} catch (error) {
 		console.log('Error:', error);
+		if (error?.name === 'AbortError') {
+			DashboardConfigurationStore().newMessage('Server', 'Request timed out', 'danger');
+		}
 		return undefined;
 	}
 }
 
 export const fetchPost = async (url, body, callback) => {
 	try {
-		const response = await fetch(`${getUrl(url)}`, {
+		const response = await request(`${getUrl(url)}`, {
 			headers: getHeaders(),
 			method: 'POST',
 			body: JSON.stringify(body)
@@ -79,6 +92,9 @@ export const fetchPost = async (url, body, callback) => {
 		return callback ? callback(payload) : payload;
 	} catch (error) {
 		console.log('Error:', error);
+		if (error?.name === 'AbortError') {
+			DashboardConfigurationStore().newMessage('Server', 'Request timed out', 'danger');
+		}
 		return undefined;
 	}
 }

@@ -69,9 +69,11 @@ export const DashboardConfigurationStore = defineStore('DashboardConfigurationSt
 			localStorage.removeItem('ActiveCrossServerConfiguration')
 		},
 		async getConfiguration(){
-			await fetchGet("/api/getDashboardConfiguration", {}, (res) => {
+			const response = await fetchGet("/api/getDashboardConfiguration", {}, (res) => {
 				if (res.status) this.Configuration = res.data
+				return res
 			});
+			return Boolean(response?.status && this.Configuration?.Server)
 		},
 		async signOut(){
 			await fetchGet("/api/signout", {}, () => {

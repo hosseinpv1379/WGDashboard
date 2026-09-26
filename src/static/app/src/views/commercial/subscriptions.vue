@@ -47,7 +47,7 @@ const createSubscription = async () => {
   await fetchPost('/api/commercial/subscriptions', form, (response) => {
     createdSubscription.value = response.data
     Object.assign(form, {client_id: '', package_id: '', name: ''})
-    dashboardStore.newMessage('Subscriptions', `Subscription created on ${response.data.provisioned_nodes} node(s)`, 'success')
+    dashboardStore.newMessage('Subscriptions', `Subscription created with ${response.data.provisioned_configurations || response.data.provisioned_nodes} configuration(s)`, 'success')
   })
   await load()
 }
@@ -120,9 +120,10 @@ onMounted(load)
         <div class="col-md-3"><label class="form-label">Custom title <span class="text-muted">(optional)</span></label><input v-model.trim="form.name" class="form-control" placeholder="Customer plan"></div>
         <div v-if="selectedPackage" class="col-12">
           <div class="rounded-3 bg-body-secondary p-3 d-flex flex-wrap gap-4">
-            <span><strong>{{ selectedPackage.QuotaGB || '∞' }}</strong> GB</span>
+            <span><strong>{{ selectedPackage.QuotaGB || '∞' }}</strong> GiB</span>
             <span><strong>{{ selectedPackage.DurationDays || '∞' }}</strong> days</span>
-            <span><strong>{{ selectedPackage.NodeCount }}</strong> locations</span>
+            <span><strong>{{ selectedPackage.NodeCount }}</strong> node(s)</span>
+            <span><strong>{{ selectedPackage.InterfaceCount }}</strong> configuration(s)</span>
             <span><strong>{{ selectedPackage.NodeGroupName }}</strong></span>
             <span class="ms-md-auto"><strong>{{ money(selectedPackage.Price) }} {{ selectedPackage.Currency }}</strong></span>
           </div>
@@ -139,7 +140,7 @@ onMounted(load)
           <span class="badge text-bg-secondary">{{ subscription.Status }}</span>
           <span v-if="subscription.Plan" class="badge text-bg-info">{{ subscription.Plan.PackageName }}</span>
           <span class="small text-muted">{{ clientLabel(subscription.ClientID) }}</span>
-          <span class="ms-auto small text-muted">{{ subscription.UsedGB }} / {{ subscription.QuotaGB || '∞' }} GB · {{ subscription.ExpiresAt || 'Unlimited time' }}</span>
+          <span class="ms-auto small text-muted">{{ subscription.UsedGB }} / {{ subscription.QuotaGB || '∞' }} GiB · {{ subscription.ExpiresAt || 'Unlimited time' }}</span>
         </div>
         <div class="card-body">
           <div v-if="subscription.Plan" class="d-flex flex-wrap gap-3 small bg-body-secondary rounded-3 p-2 mb-3">
@@ -150,7 +151,7 @@ onMounted(load)
 
           <div v-if="edits[subscription.SubscriptionID]" class="row g-2 align-items-end mb-3">
             <div class="col-md-3"><label class="form-label small">Name</label><input v-model="edits[subscription.SubscriptionID].name" class="form-control form-control-sm"></div>
-            <div class="col-md-2"><label class="form-label small">Quota (GB)</label><input v-model.number="edits[subscription.SubscriptionID].quota_gb" min="0" step="0.1" type="number" class="form-control form-control-sm"></div>
+            <div class="col-md-2"><label class="form-label small">Quota (GiB)</label><input v-model.number="edits[subscription.SubscriptionID].quota_gb" min="0" step="0.1" type="number" class="form-control form-control-sm"></div>
             <div class="col-md-3"><label class="form-label small">Expiration time</label><input v-model="edits[subscription.SubscriptionID].expires_at" type="datetime-local" class="form-control form-control-sm"></div>
             <div class="col-md-1"><label class="form-label small">Max</label><input v-model.number="edits[subscription.SubscriptionID].max_peers" min="1" type="number" class="form-control form-control-sm"></div>
             <div class="col-md-2"><label class="form-label small">Status</label><select v-model="edits[subscription.SubscriptionID].status" class="form-select form-select-sm"><option value="active">Active</option><option value="disabled">Disabled</option></select></div>
@@ -170,13 +171,13 @@ onMounted(load)
 
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-0">
-              <thead><tr><th>Node</th><th>Location</th><th>Address</th><th>Status</th><th>Usage</th><th></th></tr></thead>
+              <thead><tr><th>Node</th><th>Interface</th><th>Location</th><th>Address</th><th>Status</th><th>Usage</th><th></th></tr></thead>
               <tbody>
                 <tr v-for="peer in subscription.Peers" :key="peer.SubscriptionPeerID">
-                  <td>{{ peer.NodeName }}</td><td>{{ peer.NodeRegion || '—' }}</td><td><code>{{ peer.Address || 'pending' }}</code></td><td>{{ peer.Status }}</td><td>{{ (peer.UsedBytes / 1073741824).toFixed(4) }} GB</td>
-                  <td class="text-end"><button v-if="peer.Status === 'active'" class="btn btn-sm btn-outline-warning" @click="peerAction(peer.SubscriptionPeerID, 'DISABLE_PEER')">Disable</button><button v-if="peer.Status === 'disabled'" class="btn btn-sm btn-outline-success" @click="peerAction(peer.SubscriptionPeerID, 'ENABLE_PEER')">Enable</button><button class="btn btn-sm btn-outline-danger ms-1" @click="peerAction(peer.SubscriptionPeerID, 'DELETE_PEER')">Delete</button></td>
+                  <td>{{ peer.NodeName }}</td><td><code>{{ peer.InterfaceName }}</code></td><td>{{ peer.NodeRegion || '—' }}</td><td><code>{{ peer.Address || 'pending' }}</code></td><td>{{ peer.Status }}</td><td>{{ (peer.UsedBytes / 1073741824).toFixed(4) }} GiB</td>
+                  <td class="text-end"><button v-if="peer.Status === 'active'" class="btn btn-sm btn-outline-warning" @click="peerAction(peer.SubscriptionPeerID, 'DISABLE_PEER')">Disable</button><button v-if="peer.Status === 'disabled'" class="btn btn-sm btn-outline-success" @click="peerAction(peer.SubscriptionPeerID, 'ENABLE_PEER')">Enable</button><button v-if="peer.Status === 'error'" class="btn btn-sm btn-outline-primary" @click="peerAction(peer.SubscriptionPeerID, 'CREATE_PEER')">Retry</button><button class="btn btn-sm btn-outline-danger ms-1" @click="peerAction(peer.SubscriptionPeerID, 'DELETE_PEER')">Delete</button></td>
                 </tr>
-                <tr v-if="!subscription.Peers.length"><td colspan="6" class="text-center text-muted py-3">No configurations</td></tr>
+                <tr v-if="!subscription.Peers.length"><td colspan="7" class="text-center text-muted py-3">No configurations</td></tr>
               </tbody>
             </table>
           </div>

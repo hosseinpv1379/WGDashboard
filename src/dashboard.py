@@ -277,6 +277,8 @@ def auth_req():
             DashboardConfig.APIAccessed = False
             whiteList = [
                 # f'/static/', 
+                '/healthz',
+                f'{appPrefix}/api/health',
                 f'{appPrefix}/api/validateAuthentication', 
                 f'{appPrefix}/api/authenticate', 
                 # f'{appPrefix}/api/getDashboardConfiguration',
@@ -309,6 +311,18 @@ def auth_req():
 @app.route(f'{APP_PREFIX}/api/handshake', methods=["GET", "OPTIONS"])
 def API_Handshake():
     return ResponseObject(True)
+
+
+@app.get(f'{APP_PREFIX}/api/health')
+@app.get('/healthz')
+def API_Health():
+    try:
+        with CommercialSubscriptionManager.engine.connect() as connection:
+            connection.execute(sqlalchemy.text("SELECT 1"))
+        return ResponseObject(data={"web": "ok", "database": "ok"})
+    except Exception:
+        app.logger.exception("Health check failed")
+        return ResponseObject(False, "Service unavailable", status_code=503)
 
 
 def _authenticated_commercial_node():
@@ -365,7 +379,7 @@ def API_Node_Job_Result(job_id):
     data = request.get_json(silent=True) or {}
     try:
         CommercialSubscriptionManager.complete_job(
-            node["NodeID"], job_id, bool(data.get("success")), data.get("result") or {},
+            node["NodeID"], job_id, data.get("success") is True, data.get("result") or {},
             data.get("error"),
         )
         return ResponseObject()
@@ -418,7 +432,7 @@ def API_Commercial_CreateNodeGroup():
     try:
         return ResponseObject(data=CommercialSubscriptionManager.create_node_group(
             data.get("name"), data.get("node_ids", []), data.get("description", ""),
-            data.get("status", "active"),
+            data.get("status", "active"), data.get("targets"),
         ), status_code=201)
     except (ValueError, TypeError) as exc:
         return ResponseObject(False, str(exc), status_code=400)
@@ -469,6 +483,72 @@ def API_Commercial_UpdatePackage(package_id):
         )
     except (ValueError, TypeError) as exc:
         return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.get(f'{APP_PREFIX}/api/commercial/outbounds')
+def API_Commercial_Outbounds():
+    return ResponseObject(data=CommercialSubscriptionManager.list_outbounds())
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/outbounds')
+def API_Commercial_CreateOutbound():
+    data = request.get_json(silent=True) or {}
+    try:
+        return ResponseObject(data=CommercialSubscriptionManager.create_outbound(
+            data.get("node_id"), data.get("name"), data.get("interface"),
+            data.get("source_interface", "wg0"), data.get("source_address_pool"),
+            data.get("configuration"),
+        ), status_code=201)
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/outbounds/<outbound_id>')
+def API_Commercial_UpdateOutbound(outbound_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        job_id = CommercialSubscriptionManager.update_outbound(outbound_id, data)
+        if not job_id:
+            return ResponseObject(False, "Outbound does not exist", status_code=404)
+        return ResponseObject(data={"job_id": job_id}, status_code=202)
+    except (ValueError, TypeError) as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/outbounds/<outbound_id>/action')
+def API_Commercial_OutboundAction(outbound_id):
+    try:
+        job_id = CommercialSubscriptionManager.queue_outbound_action(
+            outbound_id, (request.get_json(silent=True) or {}).get("operation")
+        )
+        return ResponseObject(data={"job_id": job_id}, status_code=202)
+    except ValueError as exc:
+        return ResponseObject(False, str(exc), status_code=400)
+
+
+@app.get(f'{APP_PREFIX}/api/commercial/users')
+def API_Commercial_Users():
+    counts = CommercialSubscriptionManager.subscription_counts_by_client()
+    users = []
+    for client in DashboardClients.GetAllClientsRaw():
+        item = dict(client)
+        item["SubscriptionCount"] = counts.get(item["ClientID"], 0)
+        users.append(item)
+    return ResponseObject(data=users)
+
+
+@app.post(f'{APP_PREFIX}/api/commercial/users/<client_id>/delete')
+def API_Commercial_DeleteUser(client_id):
+    if CommercialSubscriptionManager.client_has_subscriptions(client_id):
+        return ResponseObject(
+            False,
+            "Users with subscription history cannot be deleted",
+            status_code=409,
+        )
+    if not DashboardClients.GetClient(client_id):
+        return ResponseObject(False, "User does not exist", status_code=404)
+    status = DashboardClients.DeleteClient(client_id)
+    return ResponseObject(status, None if status else "Unable to delete user", status_code=200 if status else 500)
 
 
 @app.get(f'{APP_PREFIX}/api/commercial/subscriptions')
@@ -552,7 +632,10 @@ def API_Public_Subscription(subscription_access):
     if error:
         return ResponseObject(False, error, status_code=404 if "exist" in error else 403)
     if request.args.get("format", "json").lower() != "zip":
-        return ResponseObject(data=payload)
+        response = ResponseObject(data=payload)
+        response.headers["Cache-Control"] = "no-store, private, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
 
     archive = io.BytesIO()
     with ZipFile(archive, "w") as zip_file:
@@ -560,12 +643,15 @@ def API_Public_Subscription(subscription_access):
             safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", item["name"])
             zip_file.writestr(safe_name, item["configuration"])
     archive.seek(0)
-    return send_file(
+    response = send_file(
         archive,
         mimetype="application/zip",
         as_attachment=True,
         download_name=f"subscription-{subscription_id}.zip",
     )
+    response.headers["Cache-Control"] = "no-store, private, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 @app.get(f'{APP_PREFIX}/api/validateAuthentication')
 def API_ValidateAuthentication():
@@ -2055,7 +2141,14 @@ Index Page
 
 @app.get(f'{APP_PREFIX}/')
 def index():
-    return render_template('index.html', APP_PREFIX=APP_PREFIX)
+    response = current_app.make_response(render_template('index.html', APP_PREFIX=APP_PREFIX))
+    # index.html contains content-hashed asset names. Caching it across a
+    # deployment can leave the browser requesting bundles removed by the new
+    # image, which looks like an endless loading screen.
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 if __name__ == "__main__":
     startThreads()

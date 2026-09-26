@@ -1,7 +1,7 @@
 import datetime
 import hashlib
-import random
 import re
+import secrets
 import uuid
 
 import bcrypt
@@ -429,7 +429,10 @@ class DashboardClients:
         if c is None:
             return False
         
-        newToken = str(random.randint(0, 999999)).zfill(6)
+        # Password reset links are bearer credentials. A six-digit value can be
+        # brute-forced and can collide globally because ResetToken is the table
+        # primary key, so use a cryptographically secure high-entropy token.
+        newToken = secrets.token_urlsafe(32)
         with self.engine.begin() as conn:
             conn.execute(
                 self.dashboardClientsPasswordResetLinkTable.update().values({
