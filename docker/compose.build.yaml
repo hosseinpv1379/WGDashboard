@@ -1,0 +1,19 @@
+# Optional local-build overlay. The normal compose.yaml pulls the published
+# images from GHCR; add this file only when building the current checkout.
+services:
+  wgdashboard:
+    image: ${WGD_BUILD_IMAGE:-wgdashboard-commercial:local}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        VCS_URL: ${VCS_URL:-local}
+        wg_net: ${WG_NETWORK:-10.0.0.1}
+        wg_subn: ${WG_SUBNET:-24}
+        wg_port: ${WG_PORT:-51820}
+
+  wg-node-local:
+    image: ${WG_NODE_BUILD_IMAGE:-wg-node:local}
+    build:
+      context: ../wg-node
+      dockerfile: Dockerfile

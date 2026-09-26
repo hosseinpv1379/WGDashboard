@@ -20,16 +20,17 @@ For more details on the source-code specific to this Docker image, refer to the 
 
 # WGDashboard: 🐳 Docker Deployment Guide
 
-This fork is built directly from the current repository. The Dockerfile compiles
-the Admin and Client Vue applications, Python dependencies, WireGuard, and
-AmneziaWG; it does not pull the upstream WGDashboard application image.
+This fork publishes its own `wgdashboard` and `wg-node` images to GitHub
+Container Registry. The images are compiled from this repository and do not
+contain the upstream WGDashboard application image.
 
-### Build and run
+### Pull and run
 
 ```bash
 cp docker/.env.example docker/.env
-# Edit docker/.env and replace the example passwords and repository URL.
-docker compose --env-file docker/.env -f docker/compose.yaml up -d --build
+# Edit docker/.env and replace the example passwords and public IP.
+docker compose --env-file docker/.env -f docker/compose.yaml pull
+docker compose --env-file docker/.env -f docker/compose.yaml up -d
 ```
 
 The Compose stack includes PostgreSQL and a built-in `wg-node-local` service.
@@ -85,19 +86,28 @@ docker compose --env-file docker/.env -f docker/compose.yaml logs -f wgdashboard
 
 ## 🔄 Updating the Container
 
-After pulling changes from your own GitHub repository, rebuild the local image:
+Pull the published images and recreate only changed containers:
 
 ```bash
-git pull
-docker compose --env-file docker/.env -f docker/compose.yaml up -d --build
+docker compose --env-file docker/.env -f docker/compose.yaml pull
+docker compose --env-file docker/.env -f docker/compose.yaml up -d --remove-orphans
 ```
 
-To publish the image to your own registry, set `WGD_IMAGE` in `docker/.env`
-to a value such as `ghcr.io/your-account/your-repository:latest`, then run:
+Pushing to the default branch runs `.github/workflows/docker.yml` and publishes:
+
+- `ghcr.io/hosseinpv1379/wgdashboard:latest`
+- `ghcr.io/hosseinpv1379/wg-node:latest`
+
+For a public installation, set both package visibilities to **Public** in the
+GitHub package settings. For a private package, run `docker login ghcr.io` on
+the server with a token that has `read:packages` permission.
+
+To build the current checkout locally instead, add the build overlay:
 
 ```bash
-docker compose --env-file docker/.env -f docker/compose.yaml build
-docker compose --env-file docker/.env -f docker/compose.yaml push wgdashboard
+docker compose --env-file docker/.env \
+  -f docker/compose.yaml -f docker/compose.build.yaml \
+  up -d --build
 ```
 
 ---

@@ -2,16 +2,7 @@ name: wgdashboard-commercial
 
 services:
   wgdashboard:
-    # This image is built from the current checkout, including all local changes.
-    image: ${WGD_IMAGE:-wgdashboard-commercial:latest}
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-      args:
-        VCS_URL: ${VCS_URL:-local}
-        wg_net: ${WG_NETWORK:-10.0.0.1}
-        wg_subn: ${WG_SUBNET:-24}
-        wg_port: ${WG_PORT:-51820}
+    image: ${WGD_IMAGE:-ghcr.io/hosseinpv1379/wgdashboard:latest}
     restart: unless-stopped
     container_name: wgdashboard
     init: true
@@ -66,10 +57,7 @@ services:
         max-file: "3"
 
   wg-node-local:
-    image: ${WG_NODE_IMAGE:-wg-node:local}
-    build:
-      context: ../wg-node
-      dockerfile: Dockerfile
+    image: ${WG_NODE_IMAGE:-ghcr.io/hosseinpv1379/wg-node:latest}
     restart: unless-stopped
     network_mode: "service:wgdashboard"
     depends_on:

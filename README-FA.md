@@ -21,6 +21,7 @@
 - [انتخاب مسیر نصب](#انتخاب-مسیر-نصب)
 - [ارتقای نصب فعلی بدون حذف اطلاعات](#ارتقای-نصب-فعلی-بدون-حذف-اطلاعات)
 - [نصب تازهٔ WGDashboard مرکزی](#نصب-تازهٔ-wgdashboard-مرکزی)
+- [انتشار ایمیج‌های اختصاصی](#انتشار-ایمیجهای-اختصاصی)
 - [دسترسی به دیتابیس با Adminer](#دسترسی-به-دیتابیس-با-adminer)
 - [نصب `wg-node` روی سرور WireGuard](#نصب-wg-node-روی-سرور-wireguard)
 - [ساخت کاربر و اشتراک چندسروره](#ساخت-کاربر-و-اشتراک-چندسروره)
@@ -166,6 +167,8 @@ git pull --ff-only origin codex/wireguard
 `docker/.env` اضافه کنید:
 
 ```dotenv
+WGD_IMAGE=ghcr.io/hosseinpv1379/wgdashboard:latest
+WG_NODE_IMAGE=ghcr.io/hosseinpv1379/wg-node:latest
 DATABASE_TYPE=postgresql
 
 WGD_NODE_BOOTSTRAP_TOKEN=
@@ -216,8 +219,9 @@ docker compose --env-file docker/.env -f docker/compose.yaml config --volumes
 نیازی به `down` نیست:
 
 ```bash
+docker compose --env-file docker/.env -f docker/compose.yaml pull
 docker compose --env-file docker/.env -f docker/compose.yaml \
-  up -d --build --remove-orphans
+  up -d --remove-orphans
 ```
 
 در اولین اجرا جدول‌های Node، Interface، Node Group، Package، Outbound، Snapshot
@@ -308,7 +312,8 @@ nano docker/.env
 هر مقدار `CHANGE_ME` را قبل از اجرا عوض کنید:
 
 ```dotenv
-WGD_IMAGE=wgdashboard-commercial:latest
+WGD_IMAGE=ghcr.io/hosseinpv1379/wgdashboard:latest
+WG_NODE_IMAGE=ghcr.io/hosseinpv1379/wg-node:latest
 VCS_URL=https://github.com/hosseinpv1379/WGDashboard
 
 WGD_ADMIN_USERNAME=admin
@@ -358,16 +363,16 @@ openssl rand -base64 36
 معتبر را داخل Volume و در مسیر `/data/subscription.key` می‌سازد. این فایل باید
 همراه بکاپ نگهداری شود.
 
-### مرحلهٔ ۴: Build و اجرا
+### مرحلهٔ ۴: دریافت ایمیج و اجرا
 
 ```bash
 cd /opt/WGDashboard
-docker compose --env-file docker/.env -f docker/compose.yaml \
-  up -d --build
+docker compose --env-file docker/.env -f docker/compose.yaml pull
+docker compose --env-file docker/.env -f docker/compose.yaml up -d
 ```
 
-Build اولیه ممکن است چند دقیقه زمان ببرد، چون فرانت‌اند، وابستگی‌های Python و
-AmneziaWG از سورس ساخته می‌شوند.
+ایمیج‌های پنل و Node از سورس همین مخزن در GitHub Actions ساخته می‌شوند؛ بنابراین
+سرور فقط آن‌ها را دانلود می‌کند و درگیر Build سنگین فرانت‌اند و AmneziaWG نیست.
 
 ### مرحلهٔ ۵: بررسی سلامت
 
@@ -387,6 +392,39 @@ curl -fsS http://127.0.0.1:10086/healthz
 ```text
 http://SERVER_IP:10086
 ```
+
+## انتشار ایمیج‌های اختصاصی
+
+Workflow مسیر `.github/workflows/docker.yml` با هر Push به شاخهٔ `main` دو
+ایمیج `linux/amd64` و `linux/arm64` را مستقیماً از سورس همین مخزن می‌سازد:
+
+```text
+ghcr.io/hosseinpv1379/wgdashboard:latest
+ghcr.io/hosseinpv1379/wg-node:latest
+```
+
+برای فعال‌شدن `latest` ابتدا تغییرات شاخهٔ `codex/wireguard` را در `main` Merge
+و Push کنید. سپس در تب **Actions** منتظر سبزشدن **Publish container images**
+بمانید. در صفحهٔ **Packages** هر دو Package را باز کنید و از
+**Package settings → Change visibility** روی **Public** بگذارید تا سرورها بدون
+Login بتوانند Pull کنند. اگر Package خصوصی بماند، روی هر سرور با PAT دارای
+مجوز `read:packages` وارد شوید:
+
+```bash
+echo 'YOUR_GITHUB_PAT' | docker login ghcr.io -u hosseinpv1379 --password-stdin
+```
+
+Compose اصلی فقط ایمیج منتشرشده را Pull می‌کند. برای Build آزمایشی از Checkout
+فعلی، فایل جداگانهٔ build را اضافه کنید:
+
+```bash
+docker compose --env-file docker/.env \
+  -f docker/compose.yaml -f docker/compose.build.yaml \
+  up -d --build
+```
+
+این فرمان فقط برای توسعه است؛ نصب عادی سرور باید با `docker/compose.yaml` انجام
+شود.
 
 برای محیط عملیاتی، دامنه و HTTPS را با Nginx یا Caddy جلوی پورت `10086` قرار
 دهید. `wg-node` باید از URL امنی مانند `https://panel.example.com` استفاده کند.
@@ -563,7 +601,8 @@ WG_NODE_INSECURE_TLS=false
 
 ```bash
 cd /opt/WGDashboard/wg-node
-docker compose --env-file .env -f compose.example.yaml up -d --build
+docker compose --env-file .env -f compose.example.yaml pull
+docker compose --env-file .env -f compose.example.yaml up -d
 ```
 
 بررسی:
@@ -845,8 +884,8 @@ docker/.env
 ```bash
 cd /opt/WGDashboard
 git pull --ff-only origin codex/wireguard
-docker compose --env-file docker/.env -f docker/compose.yaml \
-  up -d --build --remove-orphans
+docker compose --env-file docker/.env -f docker/compose.yaml pull
+docker compose --env-file docker/.env -f docker/compose.yaml up -d --remove-orphans
 ```
 
 به‌روزرسانی Agent روی هر Node:
@@ -855,8 +894,8 @@ docker compose --env-file docker/.env -f docker/compose.yaml \
 cd /opt/WGDashboard
 git pull --ff-only origin codex/wireguard
 cd wg-node
-docker compose --env-file .env -f compose.example.yaml \
-  up -d --build
+docker compose --env-file .env -f compose.example.yaml pull
+docker compose --env-file .env -f compose.example.yaml up -d
 ```
 
 ### بازگردانی PostgreSQL
@@ -911,15 +950,16 @@ docker compose --env-file docker/.env -f docker/compose.yaml logs --tail=200 wgd
 Nginx/Cloudflare نیز Purge کنید؛ فایل‌های Asset هش‌دار هستند و HTML قدیمی ممکن
 است به Bundle حذف‌شده اشاره کند.
 
-### Build فرانت‌اند روی `proxy.js` متوقف می‌شود
+### خطای قدیمی Build فرانت‌اند روی `proxy.js`
 
-نسخهٔ فعلی دیگر به فایل `proxy.js` وابسته نیست. ابتدا آخرین Commit را بگیرید:
+نسخهٔ فعلی دیگر به فایل `proxy.js` وابسته نیست و روی سرور Build انجام نمی‌شود.
+آخرین ایمیج منتشرشده را دریافت کنید:
 
 ```bash
 cd /opt/WGDashboard
 git pull --ff-only origin codex/wireguard
-grep -n "WGD_DEV_PROXY" src/static/app/vite.config.js
-docker compose --env-file docker/.env -f docker/compose.yaml build --no-cache wgdashboard
+docker compose --env-file docker/.env -f docker/compose.yaml pull wgdashboard
+docker compose --env-file docker/.env -f docker/compose.yaml up -d wgdashboard
 ```
 
 ### PostgreSQL ناسالم است
@@ -1007,8 +1047,9 @@ docker compose --env-file docker/.env -f docker/compose.yaml logs -f wgdashboard
 # Restart
 docker compose --env-file docker/.env -f docker/compose.yaml restart wgdashboard
 
-# Rebuild بعد از Pull
-docker compose --env-file docker/.env -f docker/compose.yaml up -d --build
+# دریافت و اجرای آخرین ایمیج
+docker compose --env-file docker/.env -f docker/compose.yaml pull
+docker compose --env-file docker/.env -f docker/compose.yaml up -d
 
 # توقف بدون حذف اطلاعات
 docker compose --env-file docker/.env -f docker/compose.yaml down
@@ -1040,7 +1081,8 @@ sudo wg show wg0
 1. نوع دیتابیس و نام Volumeهای فعلی را ثبت کنید.
 2. از `.env`، `/data`، WireGuard و PostgreSQL بکاپ بگیرید.
 3. گزینه‌های جدید را بدون جایگزین‌کردن `.env` به آن اضافه کنید.
-4. `git pull` و سپس `docker compose ... up -d --build` اجرا کنید.
+4. `git pull` و سپس `docker compose ... pull` و `docker compose ... up -d` را
+   اجرا کنید.
 
 اجرای `down -v` یا انتخاب Volume جدید باعث می‌شود پنل خالی به‌نظر برسد، حتی اگر
 Volume قدیمی هنوز روی دیسک وجود داشته باشد.

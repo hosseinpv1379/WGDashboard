@@ -52,7 +52,8 @@ sudo wg show wg0
 3. Start the agent:
 
 ```bash
-docker compose --env-file .env -f compose.example.yaml up -d --build
+docker compose --env-file .env -f compose.example.yaml pull
+docker compose --env-file .env -f compose.example.yaml up -d
 docker compose --env-file .env -f compose.example.yaml logs -f wg-node
 ```
 

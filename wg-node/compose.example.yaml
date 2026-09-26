@@ -1,9 +1,6 @@
 services:
   wg-node:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: wg-node:local
+    image: ${WG_NODE_IMAGE:-ghcr.io/hosseinpv1379/wg-node:latest}
     restart: unless-stopped
     network_mode: host
     cap_add:
