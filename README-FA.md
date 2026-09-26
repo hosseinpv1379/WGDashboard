@@ -17,6 +17,7 @@
 
 ## فهرست
 
+- [شروع سریع برای تازه‌کارها](#شروع-سریع-برای-تازه‌کارها)
 - [معماری ساده](#معماری-ساده)
 - [انتخاب مسیر نصب](#انتخاب-مسیر-نصب)
 - [ارتقای نصب فعلی بدون حذف اطلاعات](#ارتقای-نصب-فعلی-بدون-حذف-اطلاعات)
@@ -31,6 +32,182 @@
 - [عیب‌یابی](#عیبیابی)
 - [فرمان‌های روزمره](#فرمانهای-روزمره)
 - [پرسش‌های متداول](#پرسشهای-متداول)
+
+## شروع سریع برای تازه‌کارها
+
+اگر برای اولین‌بار با Docker و لینوکس کار می‌کنید و فقط می‌خواهید هرچه سریع‌تر
+یک پنل WGDashboard راه‌اندازی کنید، همین بخش کافی است. برای کارهای پیشرفته‌تر
+(بکاپ، ارتقا، Outbound، چند Interface و...) بعداً به بخش‌های دیگر همین فایل
+مراجعه کنید.
+
+### چیزهایی که از قبل لازم دارید
+
+- یک سرور مجازی (VPS) با Ubuntu 22.04 یا 24.04 و دسترسی `root`. هر شرکت
+  هاستینگی مثل Hetzner، DigitalOcean یا آروان این را در چند دقیقه می‌سازد.
+- یک برنامهٔ ترمینال برای اتصال SSH؛ روی ویندوز [PuTTY](https://www.putty.org/)
+  یا Windows Terminal، روی مک/لینوکس همان Terminal پیش‌فرض.
+- آی‌پی عمومی همان سرور (در پنل ارائه‌دهندهٔ سرور نمایش داده می‌شود).
+
+### مرحلهٔ ۱: وصل‌شدن به سرور
+
+```bash
+ssh root@YOUR_SERVER_IP
+```
+
+به‌جای `YOUR_SERVER_IP` آی‌پی واقعی سرور را بگذارید و رمزی که ارائه‌دهندهٔ سرور
+داده را وارد کنید.
+
+### مرحلهٔ ۲: نصب Docker
+
+این بلوک را همان‌طور که هست کپی و در ترمینال Paste کنید:
+
+```bash
+sudo apt update && sudo apt install -y ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+```
+
+### مرحلهٔ ۳: دانلود پروژه
+
+```bash
+sudo git clone --branch codex/wireguard --single-branch \
+  https://github.com/hosseinpv1379/WGDashboard.git /opt/WGDashboard
+cd /opt/WGDashboard
+```
+
+### مرحلهٔ ۴: ساخت فایل تنظیمات
+
+```bash
+cp docker/.env.example docker/.env
+nano docker/.env
+```
+
+فایل باز می‌شود. فقط این سه مقدار را پیدا و عوض کنید (بقیهٔ خط‌ها را دست نزنید):
+
+| نام مقدار در فایل | چه چیزی جایگزین کنید |
+| --- | --- |
+| `WGD_ADMIN_PASSWORD` | یک رمز قوی برای ورود به پنل |
+| `POSTGRES_PASSWORD` | یک رمز قوی دیگر، فقط برای دیتابیس |
+| `PUBLIC_IP` | همان آی‌پی سروری که با آن SSH زدید |
+
+برای ساختن یک رمز تصادفی امن می‌توانید از این دستور کمک بگیرید:
+
+```bash
+openssl rand -base64 24
+```
+
+بعد از تغییر، برای ذخیره و خروج از nano:
+
+1. کلید `Ctrl+O` را بزنید، بعد `Enter` را بزنید (ذخیره).
+2. کلید `Ctrl+X` را بزنید (خروج).
+
+### مرحلهٔ ۵: بالا آوردن پنل
+
+```bash
+cd /opt/WGDashboard
+docker compose --env-file docker/.env -f docker/compose.yaml pull
+docker compose --env-file docker/.env -f docker/compose.yaml up -d
+```
+
+اولین اجرا ممکن است یکی دو دقیقه طول بکشد. با این دستور مطمئن شوید همه‌چیز
+`Up` است:
+
+```bash
+docker compose --env-file docker/.env -f docker/compose.yaml ps
+```
+
+### مرحلهٔ ۶: ورود به پنل
+
+مرورگر را باز کنید و به این آدرس بروید:
+
+```text
+http://YOUR_SERVER_IP:10086
+```
+
+با یوزرنیم `admin` و همان رمزی که در `WGD_ADMIN_PASSWORD` گذاشتید وارد شوید.
+
+تبریک! پنل آماده است و همین سرور به‌طور خودکار به‌عنوان اولین سرور VPN
+(Node محلی) هم فعال شده. برای ساخت اولین کاربر و اشتراک به بخش
+[ساخت کاربر و اشتراک چندسروره](#ساخت-کاربر-و-اشتراک-چندسروره) بروید.
+
+### (اختیاری) اضافه‌کردن یک سرور دوم به‌عنوان Node
+
+اگر یک سرور دیگر (مثلاً در کشور دیگر) هم دارید و می‌خواهید کاربران از آن هم
+استفاده کنند:
+
+1. داخل پنل، از منوی **Nodes** روی **Add WireGuard node** بزنید، یک اسم و
+   Endpoint مثل `de1.example.com:51820` وارد کنید و **Node ID** و
+   **Node Token** نمایش‌داده‌شده را همان لحظه جایی امن یادداشت کنید؛ دوباره
+   نمایش داده نمی‌شوند.
+2. روی سرور دوم (نه سرور پنل)، مراحل ۱ تا ۳ همین بخش را دوباره تکرار کنید
+   (اتصال SSH، نصب Docker، دانلود پروژه).
+3. روی همان سرور دوم، WireGuard را نصب و یک Interface بسازید:
+
+```bash
+sudo apt update && sudo apt install -y wireguard
+sudo sysctl -w net.ipv4.ip_forward=1
+wg genkey | tee /root/server.key | wg pubkey
+```
+
+فایل `/etc/wireguard/wg0.conf` را بسازید (کلید بالا را در `PrivateKey`
+جایگزین کنید؛ برای نسخهٔ کامل و امن‌تر این فایل به بخش
+[نصب wg-node روی سرور WireGuard](#نصب-wg-node-روی-سرور-wireguard) مراجعه
+کنید):
+
+```ini
+[Interface]
+Address = 10.88.0.1/24
+ListenPort = 51820
+PrivateKey = SERVER_PRIVATE_KEY
+SaveConfig = true
+```
+
+```bash
+sudo systemctl enable --now wg-quick@wg0
+cd /opt/WGDashboard/wg-node
+cp .env.example .env
+nano .env
+```
+
+در فایل `.env` این مقدارها را از پنل و همین سرور کپی کنید:
+
+```dotenv
+WG_PANEL_URL=http://YOUR_SERVER_IP:10086
+WG_NODE_ID=همان Node ID که از پنل گرفتید
+WG_NODE_TOKEN=همان Node Token که از پنل گرفتید
+WG_NODE_PUBLIC_ENDPOINT=آی‌پی-سرور-دوم:51820
+```
+
+سپس اجرا کنید:
+
+```bash
+docker compose --env-file .env -f compose.example.yaml pull
+docker compose --env-file .env -f compose.example.yaml up -d
+```
+
+بعد از حدود یک دقیقه، در پنل زیر بخش **Nodes** وضعیت این سرور باید سبز/آنلاین
+شود.
+
+> برای HTTPS، ثبت خودکار Nodeها با Bootstrap Token، چند Interface روی یک سرور،
+> Outbound و بکاپ‌گیری منظم، بخش‌های بعدی همین فایل را بخوانید.
+
+---
 
 ## معماری ساده
 
