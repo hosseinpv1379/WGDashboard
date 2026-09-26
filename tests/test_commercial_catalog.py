@@ -86,6 +86,163 @@ class CommercialCatalogTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Node does not exist"):
             self.manager.create_node_group("Unknown", ["missing-node"])
 
+    def test_node_group_topology_changes_sync_existing_subscriptions(self):
+        germany = self.manager.create_node(
+            "sync-germany", "Germany", "de-sync.example.com:51820", 10,
+        )
+        finland = self.manager.create_node(
+            "sync-finland", "Finland", "fi-sync.example.com:51820", 10,
+        )
+        group = self.manager.create_node_group(
+            "Sync Europe", [germany["node_id"]],
+        )
+        package = self.manager.create_package(
+            "Sync package", group["node_group_id"], 10, 30, 10, "USD",
+        )
+        self.manager.create_subscription_from_package(
+            "sync-client", package["package_id"],
+        )
+        self.manager.create_subscription_from_package(
+            "sync-client-two", package["package_id"],
+        )
+
+        self.manager.update_node_group(group["node_group_id"], {
+            "targets": [
+                {"node_id": germany["node_id"], "interface": "wg0"},
+                {"node_id": finland["node_id"], "interface": "wg0"},
+            ],
+        })
+        subscriptions = self.manager.list_subscriptions()
+        self.assertEqual(len(subscriptions), 2)
+        for subscription in subscriptions:
+            self.assertEqual(
+                {peer["NodeID"] for peer in subscription["Peers"]},
+                {germany["node_id"], finland["node_id"]},
+            )
+            self.assertEqual(subscription["MaxPeers"], 2)
+        self.assertEqual(
+            [job["Operation"] for job in self.manager.lease_jobs(finland["node_id"])],
+            ["CREATE_PEER", "CREATE_PEER"],
+        )
+
+        self.manager.update_node_group(group["node_group_id"], {
+            "targets": [
+                {"node_id": finland["node_id"], "interface": "wg0"},
+            ],
+        })
+        for subscription in self.manager.list_subscriptions():
+            self.assertEqual(
+                [peer["NodeID"] for peer in subscription["Peers"]],
+                [finland["node_id"]],
+            )
+            self.assertEqual(subscription["MaxPeers"], 1)
+        germany_operations = [
+            job["Operation"] for job in self.manager.lease_jobs(germany["node_id"])
+        ]
+        self.assertEqual(germany_operations.count("DELETE_PEER"), 2)
+
+    def test_moving_package_to_another_group_syncs_sold_subscriptions(self):
+        first = self.manager.create_node(
+            "package-first", "DE", "package-de.example.com:51820", 10,
+        )
+        second = self.manager.create_node(
+            "package-second", "FI", "package-fi.example.com:51820", 10,
+        )
+        first_group = self.manager.create_node_group(
+            "Package first group", [first["node_id"]],
+        )
+        second_group = self.manager.create_node_group(
+            "Package second group", [second["node_id"]],
+        )
+        package = self.manager.create_package(
+            "Movable package", first_group["node_group_id"], 10, 30, 25, "USD",
+        )
+        self.manager.create_subscription_from_package(
+            "package-client", package["package_id"],
+        )
+
+        self.manager.update_package(package["package_id"], {
+            "node_group_id": second_group["node_group_id"],
+        })
+        subscription = self.manager.list_subscriptions()[0]
+        self.assertEqual(
+            [peer["NodeID"] for peer in subscription["Peers"]],
+            [second["node_id"]],
+        )
+        self.assertEqual(
+            subscription["Plan"]["NodeGroupID"], second_group["node_group_id"],
+        )
+        self.assertEqual(subscription["Plan"]["Price"], 25.0)
+
+    def test_group_sync_is_atomic_when_new_node_capacity_is_too_small(self):
+        current = self.manager.create_node(
+            "capacity-current", "DE", "capacity-current.example.com:51820", 10,
+        )
+        full = self.manager.create_node(
+            "capacity-full", "FI", "capacity-full.example.com:51820", 1,
+        )
+        group = self.manager.create_node_group(
+            "Atomic capacity group", [current["node_id"]],
+        )
+        package = self.manager.create_package(
+            "Atomic capacity package", group["node_group_id"], 10, 30, 10, "USD",
+        )
+        self.manager.create_subscription_from_package("capacity-one", package["package_id"])
+        self.manager.create_subscription_from_package("capacity-two", package["package_id"])
+
+        with self.assertRaisesRegex(ValueError, "capacity is exhausted"):
+            self.manager.update_node_group(group["node_group_id"], {
+                "targets": [
+                    {"node_id": current["node_id"], "interface": "wg0"},
+                    {"node_id": full["node_id"], "interface": "wg0"},
+                ],
+            })
+        listed_group = self.manager.list_node_groups()[0]
+        self.assertEqual(listed_group["NodeIDs"], [current["node_id"]])
+        for subscription in self.manager.list_subscriptions():
+            self.assertEqual(
+                [peer["NodeID"] for peer in subscription["Peers"]],
+                [current["node_id"]],
+            )
+
+    def test_revoking_node_removes_it_from_groups_and_subscriptions(self):
+        node = self.manager.create_node(
+            "removed-node", "DE", "removed.example.com:51820", 10,
+        )
+        group = self.manager.create_node_group(
+            "Removed node group", [node["node_id"]],
+        )
+        package = self.manager.create_package(
+            "Removed node package", group["node_group_id"], 10, 30, 10, "USD",
+        )
+        self.manager.create_subscription_from_package(
+            "removed-client", package["package_id"],
+        )
+
+        self.assertTrue(self.manager.revoke_node(node["node_id"]))
+        self.assertEqual(self.manager.list_subscriptions()[0]["Peers"], [])
+        self.assertEqual(self.manager.list_node_groups()[0]["NodeIDs"], [])
+        self.assertEqual(self.manager.list_nodes()[0]["Status"], "revoking")
+
+        jobs = self.manager.lease_jobs(node["node_id"])
+        self.assertEqual(
+            [job["Operation"] for job in jobs],
+            ["CREATE_PEER", "DELETE_PEER"],
+        )
+        for job in jobs:
+            result = {}
+            if job["Operation"] == "CREATE_PEER":
+                result = {
+                    "address": "10.90.0.2/24",
+                    "server_public_key": "C" * 43 + "=",
+                    "preshared_key": "",
+                    "endpoint": "removed.example.com:51820",
+                }
+            self.manager.complete_job(
+                node["node_id"], job["JobID"], True, result,
+            )
+        self.assertEqual(self.manager.list_nodes(), [])
+
     def _subscription_peer(self, quota_gb=1):
         node = self.manager.create_node(
             "traffic-node", "Test", "test.example.com:51820", 100,

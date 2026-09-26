@@ -405,11 +405,14 @@ class CommercialSubscriptions:
             for row in rows:
                 item = self._row(row)
                 last_seen = row.get("LastSeenAt")
-                item["Status"] = (
-                    "online" if last_seen and
-                    (now - last_seen).total_seconds() <= self.NODE_OFFLINE_AFTER_SECONDS
-                    else "offline"
-                )
+                if row["Status"] == "revoking":
+                    item["Status"] = "revoking"
+                else:
+                    item["Status"] = (
+                        "online" if last_seen and
+                        (now - last_seen).total_seconds() <= self.NODE_OFFLINE_AFTER_SECONDS
+                        else "offline"
+                    )
                 interfaces = conn.execute(
                     self.node_interfaces.select().where(
                         self.node_interfaces.c.NodeID == row["NodeID"]
@@ -422,12 +425,104 @@ class CommercialSubscriptions:
 
     def revoke_node(self, node_id):
         with self.engine.begin() as conn:
-            result = conn.execute(
-                self.nodes.update().values(Status="revoked", RevokedAt=datetime.now()).where(
-                    db.and_(self.nodes.c.NodeID == node_id, self.nodes.c.RevokedAt.is_(None))
+            node = conn.execute(
+                self.nodes.select().where(
+                    db.and_(
+                        self.nodes.c.NodeID == node_id,
+                        self.nodes.c.RevokedAt.is_(None),
+                    )
+                )
+            ).mappings().fetchone()
+            if not node:
+                return False
+
+            affected_group_ids = sorted(set(conn.execute(
+                db.select(self.node_group_targets.c.NodeGroupID).where(
+                    self.node_group_targets.c.NodeID == node_id
+                )
+            ).scalars().all()) | set(conn.execute(
+                db.select(self.node_group_members.c.NodeGroupID).where(
+                    self.node_group_members.c.NodeID == node_id
+                )
+            ).scalars().all()))
+            conn.execute(
+                self.node_group_targets.delete().where(
+                    self.node_group_targets.c.NodeID == node_id
                 )
             )
-        return result.rowcount == 1
+            conn.execute(
+                self.node_group_members.delete().where(
+                    self.node_group_members.c.NodeID == node_id
+                )
+            )
+
+            # A node removal must never be blocked because another target is at
+            # capacity. Only removals are needed here; ordinary group edits do
+            # a full add/remove reconciliation.
+            for group_id in affected_group_ids:
+                self._sync_node_group_subscriptions(
+                    conn, group_id, add_missing=False
+                )
+
+            peer_filter = db.and_(
+                self.subscription_peers.c.NodeID == node_id,
+                self.subscription_peers.c.Status != "deleted",
+            )
+            if node["Status"] != "revoking":
+                peer_filter = db.and_(
+                    peer_filter,
+                    self.subscription_peers.c.Status != "deleting",
+                )
+            peer_rows = conn.execute(
+                self.subscription_peers.select().where(peer_filter).order_by(
+                    self.subscription_peers.c.SubscriptionPeerID
+                )
+            ).mappings().fetchall()
+            now = datetime.now()
+            for peer in peer_rows:
+                self._queue_topology_peer_delete(conn, peer, now)
+
+            conn.execute(
+                self.nodes.update().values(Status="revoking").where(
+                    self.nodes.c.NodeID == node_id
+                )
+            )
+            self._finalize_node_revocation(conn, node_id, now)
+        return True
+
+    def _finalize_node_revocation(self, conn, node_id, now=None):
+        status = conn.execute(
+            db.select(self.nodes.c.Status).where(self.nodes.c.NodeID == node_id)
+        ).scalar_one_or_none()
+        if status != "revoking":
+            return False
+        remaining = conn.execute(
+            db.select(db.func.count()).select_from(self.subscription_peers).where(
+                db.and_(
+                    self.subscription_peers.c.NodeID == node_id,
+                    self.subscription_peers.c.Status != "deleted",
+                )
+            )
+        ).scalar_one()
+        if remaining:
+            return False
+        unfinished_mutations = conn.execute(
+            db.select(db.func.count()).select_from(self.node_jobs).where(
+                db.and_(
+                    self.node_jobs.c.NodeID == node_id,
+                    self.node_jobs.c.Operation.in_(("CREATE_PEER", "ENABLE_PEER")),
+                    self.node_jobs.c.Status.in_(("pending", "leased")),
+                )
+            )
+        ).scalar_one()
+        if unfinished_mutations:
+            return False
+        conn.execute(
+            self.nodes.update().values(
+                Status="revoked", RevokedAt=now or datetime.now()
+            ).where(self.nodes.c.NodeID == node_id)
+        )
+        return True
 
     def _validated_nodes(self, conn, node_ids, require_one=True):
         if not isinstance(node_ids, list):
@@ -516,6 +611,193 @@ class CommercialSubscriptions:
                 )
             ).order_by(self.nodes.c.Name)
         ).mappings().fetchall()
+
+    def _queue_topology_peer_delete(self, conn, peer, now=None):
+        """Remove a peer from delivery immediately and clean it on the node."""
+        if peer["Status"] == "deleted":
+            return None
+        now = now or datetime.now()
+        job_id = self._queue_job(
+            conn, peer["NodeID"], "DELETE_PEER",
+            {
+                "subscription_peer_id": peer["SubscriptionPeerID"],
+                "interface": peer["InterfaceName"],
+                "public_key": peer["ClientPublicKey"],
+                "address": peer["Address"],
+            },
+            subscription_id=peer["SubscriptionID"],
+            subscription_peer_id=peer["SubscriptionPeerID"],
+            # A random suffix lets an operator retry a failed physical cleanup
+            # without resurrecting the old failed idempotent job.
+            idempotency_key=(
+                f"topology:delete:{peer['SubscriptionPeerID']}:{uuid.uuid4()}"
+            ),
+        )
+        conn.execute(
+            self.subscription_peers.update().values(
+                Status="deleting", UpdatedAt=now
+            ).where(
+                self.subscription_peers.c.SubscriptionPeerID
+                == peer["SubscriptionPeerID"]
+            )
+        )
+        return job_id
+
+    def _create_topology_peer(self, conn, subscription, target, now=None):
+        """Create one managed subscription peer for a node/interface target."""
+        now = now or datetime.now()
+        private_status, private_key = GenerateWireguardPrivateKey()
+        if not private_status:
+            raise RuntimeError("Unable to generate WireGuard private key")
+        public_status, public_key = GenerateWireguardPublicKey(private_key)
+        if not public_status:
+            raise RuntimeError("Unable to generate WireGuard public key")
+
+        peer_id = str(uuid.uuid4())
+        peer_name = (
+            f"{subscription['Name']}-{target['Name']}-{target['InterfaceName']}"
+        )
+        conn.execute(self.subscription_peers.insert().values(
+            SubscriptionPeerID=peer_id,
+            SubscriptionID=subscription["SubscriptionID"],
+            NodeID=target["NodeID"],
+            RemotePeerID=public_key,
+            Name=peer_name,
+            InterfaceName=target["InterfaceName"],
+            ClientPublicKey=public_key,
+            ClientPrivateKeyEncrypted=self._encrypt(private_key),
+            DNS="1.1.1.1",
+            MTU=1420,
+            AllowedIPs="0.0.0.0/0, ::/0",
+            Status="provisioning",
+            UpdatedAt=now,
+        ))
+        self._queue_job(
+            conn, target["NodeID"], "CREATE_PEER",
+            {
+                "subscription_peer_id": peer_id,
+                "interface": target["InterfaceName"],
+                "peer_name": peer_name,
+                "public_key": public_key,
+            },
+            subscription_id=subscription["SubscriptionID"],
+            subscription_peer_id=peer_id,
+            idempotency_key=f"create:{peer_id}",
+        )
+        return peer_id
+
+    def _sync_planned_subscriptions(self, conn, subscription_ids, targets,
+                                    add_missing=True):
+        """Make sold package subscriptions match their live group topology."""
+        subscription_ids = sorted(set(subscription_ids))
+        if not subscription_ids:
+            return {"added": 0, "removed": 0}
+
+        desired = {
+            (target["NodeID"], target["InterfaceName"]): target
+            for target in targets
+        }
+        subscription_query = self.subscriptions.select().where(
+            self.subscriptions.c.SubscriptionID.in_(subscription_ids)
+        ).order_by(self.subscriptions.c.SubscriptionID)
+        if self.engine.dialect.name == "postgresql":
+            subscription_query = subscription_query.with_for_update()
+        subscriptions = conn.execute(subscription_query).mappings().fetchall()
+
+        removals = []
+        additions = []
+        for subscription in subscriptions:
+            peer_query = self.subscription_peers.select().where(
+                db.and_(
+                    self.subscription_peers.c.SubscriptionID
+                    == subscription["SubscriptionID"],
+                    self.subscription_peers.c.Status != "deleted",
+                )
+            ).order_by(self.subscription_peers.c.SubscriptionPeerID)
+            if self.engine.dialect.name == "postgresql":
+                peer_query = peer_query.with_for_update()
+            peers = conn.execute(peer_query).mappings().fetchall()
+            current = {
+                (peer["NodeID"], peer["InterfaceName"]): peer
+                for peer in peers
+                if peer["Status"] != "deleting"
+            }
+            removals.extend(
+                peer for key, peer in current.items() if key not in desired
+            )
+            if add_missing:
+                additions.extend(
+                    (subscription, target)
+                    for key, target in desired.items() if key not in current
+                )
+
+        additions_per_node = {}
+        removals_per_node = {}
+        for _subscription, target in additions:
+            additions_per_node[target["NodeID"]] = (
+                additions_per_node.get(target["NodeID"], 0) + 1
+            )
+        for peer in removals:
+            removals_per_node[peer["NodeID"]] = (
+                removals_per_node.get(peer["NodeID"], 0) + 1
+            )
+
+        for node_id in sorted(additions_per_node):
+            node_query = self.nodes.select().where(
+                db.and_(
+                    self.nodes.c.NodeID == node_id,
+                    self.nodes.c.RevokedAt.is_(None),
+                )
+            )
+            if self.engine.dialect.name == "postgresql":
+                node_query = node_query.with_for_update()
+            node = conn.execute(node_query).mappings().fetchone()
+            if not node:
+                raise ValueError(f"Node is no longer available: {node_id}")
+            current_count = conn.execute(
+                db.select(db.func.count()).select_from(
+                    self.subscription_peers
+                ).where(
+                    db.and_(
+                        self.subscription_peers.c.NodeID == node_id,
+                        self.subscription_peers.c.Status.notin_(("deleted", "deleting")),
+                    )
+                )
+            ).scalar_one()
+            projected_count = (
+                int(current_count)
+                - removals_per_node.get(node_id, 0)
+                + additions_per_node[node_id]
+            )
+            if int(node["Capacity"] or 0) > 0 and projected_count > int(node["Capacity"]):
+                raise ValueError(f"Node capacity is exhausted: {node['Name']}")
+
+        now = datetime.now()
+        for peer in removals:
+            self._queue_topology_peer_delete(conn, peer, now)
+        for subscription, target in additions:
+            self._create_topology_peer(conn, subscription, target, now)
+        for subscription in subscriptions:
+            conn.execute(
+                self.subscriptions.update().values(
+                    MaxPeers=max(1, len(desired)), UpdatedAt=now
+                ).where(
+                    self.subscriptions.c.SubscriptionID
+                    == subscription["SubscriptionID"]
+                )
+            )
+        return {"added": len(additions), "removed": len(removals)}
+
+    def _sync_node_group_subscriptions(self, conn, group_id, add_missing=True):
+        subscription_ids = conn.execute(
+            db.select(self.subscription_plans.c.SubscriptionID).where(
+                self.subscription_plans.c.NodeGroupID == group_id
+            )
+        ).scalars().all()
+        return self._sync_planned_subscriptions(
+            conn, subscription_ids, self._group_target_rows(conn, group_id),
+            add_missing=add_missing,
+        )
 
     def create_node_group(self, name, node_ids=None, description="", status="active", targets=None):
         name = str(name or "").strip()
@@ -610,6 +892,7 @@ class CommercialSubscriptions:
 
     def update_node_group(self, group_id, data):
         values = {"UpdatedAt": datetime.now()}
+        topology_changed = "node_ids" in data or "targets" in data
         with self.engine.begin() as conn:
             existing = conn.execute(
                 self.node_groups.select().where(self.node_groups.c.NodeGroupID == group_id)
@@ -688,6 +971,8 @@ class CommercialSubscriptions:
                     self.node_groups.c.NodeGroupID == group_id
                 )
             )
+            if topology_changed:
+                self._sync_node_group_subscriptions(conn, group_id)
         return True
 
     def create_package(self, name, node_group_id, quota_gb, duration_days, price,
@@ -770,6 +1055,7 @@ class CommercialSubscriptions:
 
     def update_package(self, package_id, data):
         values = {"UpdatedAt": datetime.now()}
+        selected_group = None
         with self.engine.begin() as conn:
             existing = conn.execute(
                 self.packages.select().where(self.packages.c.PackageID == package_id)
@@ -813,11 +1099,29 @@ class CommercialSubscriptions:
                 if not self._group_target_rows(conn, group["NodeGroupID"]):
                     raise ValueError("Node group must contain at least one node interface")
                 values["NodeGroupID"] = group["NodeGroupID"]
+                selected_group = group
             conn.execute(
                 self.packages.update().values(**values).where(
                     self.packages.c.PackageID == package_id
                 )
             )
+            if (selected_group is not None
+                    and selected_group["NodeGroupID"] != existing["NodeGroupID"]):
+                subscription_ids = conn.execute(
+                    db.select(self.subscription_plans.c.SubscriptionID).where(
+                        self.subscription_plans.c.PackageID == package_id
+                    )
+                ).scalars().all()
+                self._sync_planned_subscriptions(
+                    conn, subscription_ids,
+                    self._group_target_rows(conn, selected_group["NodeGroupID"]),
+                )
+                conn.execute(
+                    self.subscription_plans.update().values(
+                        NodeGroupID=selected_group["NodeGroupID"],
+                        NodeGroupName=selected_group["Name"],
+                    ).where(self.subscription_plans.c.PackageID == package_id)
+                )
         return True
 
     @staticmethod
@@ -1019,7 +1323,10 @@ class CommercialSubscriptions:
         with self.engine.begin() as conn:
             conn.execute(
                 self.nodes.update().values(
-                    Status="online",
+                    Status=db.case(
+                        (self.nodes.c.Status == "revoking", "revoking"),
+                        else_="online",
+                    ),
                     LastSeenAt=now,
                     AgentVersion=str(payload.get("agent_version", ""))[:64],
                     PublicEndpoint=str(payload.get("public_endpoint", ""))[:500]
@@ -1448,7 +1755,13 @@ class CommercialSubscriptions:
                         self.subscription_peers.outerjoin(
                             self.nodes, self.subscription_peers.c.NodeID == self.nodes.c.NodeID
                         )
-                    ).where(self.subscription_peers.c.SubscriptionID == subscription["SubscriptionID"])
+                    ).where(
+                        db.and_(
+                            self.subscription_peers.c.SubscriptionID
+                            == subscription["SubscriptionID"],
+                            self.subscription_peers.c.Status.notin_(("deleted", "deleting")),
+                        )
+                    )
                 ).mappings().fetchall()
                 item["Peers"] = []
                 for peer in peers:
@@ -1498,7 +1811,7 @@ class CommercialSubscriptions:
                     db.select(db.func.count()).select_from(self.subscription_peers).where(
                         db.and_(
                             self.subscription_peers.c.SubscriptionID == subscription_id,
-                            self.subscription_peers.c.Status != "deleted",
+                            self.subscription_peers.c.Status.notin_(("deleted", "deleting")),
                         )
                     )
                 ).scalar_one()
@@ -1636,7 +1949,7 @@ class CommercialSubscriptions:
                 db.select(db.func.count()).select_from(self.subscription_peers).where(
                     db.and_(
                         self.subscription_peers.c.SubscriptionID == subscription_id,
-                        self.subscription_peers.c.Status != "deleted",
+                        self.subscription_peers.c.Status.notin_(("deleted", "deleting")),
                     )
                 )
             ).scalar_one()
@@ -1788,7 +2101,17 @@ class CommercialSubscriptions:
                         db.and_(self.node_jobs.c.Status == "leased", self.node_jobs.c.LeaseUntil < now),
                     ),
                 )
-            ).order_by(self.node_jobs.c.CreatedAt).limit(limit)
+            ).order_by(
+                self.node_jobs.c.CreatedAt,
+                db.case(
+                    (self.node_jobs.c.Operation == "CREATE_PEER", 0),
+                    (self.node_jobs.c.Operation == "ENABLE_PEER", 1),
+                    (self.node_jobs.c.Operation == "DISABLE_PEER", 2),
+                    (self.node_jobs.c.Operation == "DELETE_PEER", 3),
+                    else_=4,
+                ),
+                self.node_jobs.c.JobID,
+            ).limit(limit)
             if self.engine.dialect.name == "postgresql":
                 query = query.with_for_update(skip_locked=True)
             jobs = conn.execute(query).mappings().fetchall()
@@ -1924,13 +2247,20 @@ class CommercialSubscriptions:
                 return True
             if not success:
                 conn.execute(
-                    self.subscription_peers.update().values(Status="error", UpdatedAt=now).where(
+                    self.subscription_peers.update().values(
+                        Status=(
+                            "deleting" if job["Operation"] == "DELETE_PEER"
+                            else "error"
+                        ),
+                        UpdatedAt=now,
+                    ).where(
                         self.subscription_peers.c.SubscriptionPeerID == peer_id
                     )
                 )
                 return True
 
             values = {"UpdatedAt": now}
+            removal_requested = peer["Status"] in {"deleted", "deleting"}
             if job["Operation"] == "CREATE_PEER":
                 address = str(result.get("address") or "")
                 server_public_key = str(result.get("server_public_key") or "")
@@ -1948,10 +2278,10 @@ class CommercialSubscriptions:
                     "ServerPublicKey": server_public_key,
                     "PresharedKeyEncrypted": self._encrypt(preshared_key),
                     "Endpoint": endpoint,
-                    "Status": "active",
+                    "Status": "deleting" if removal_requested else "active",
                 })
             elif job["Operation"] == "ENABLE_PEER":
-                values["Status"] = "active"
+                values["Status"] = "deleting" if removal_requested else "active"
             elif job["Operation"] == "DISABLE_PEER":
                 values["Status"] = "disabled"
             elif job["Operation"] == "DELETE_PEER":
@@ -1962,13 +2292,44 @@ class CommercialSubscriptions:
                 )
             )
 
+            if (removal_requested
+                    and job["Operation"] in {"CREATE_PEER", "ENABLE_PEER"}):
+                pending_delete = conn.execute(
+                    db.select(db.func.count()).select_from(self.node_jobs).where(
+                        db.and_(
+                            self.node_jobs.c.SubscriptionPeerID == peer_id,
+                            self.node_jobs.c.Operation == "DELETE_PEER",
+                            self.node_jobs.c.Status.in_(("pending", "leased")),
+                        )
+                    )
+                ).scalar_one()
+                if not pending_delete:
+                    self._queue_job(
+                        conn, node_id, "DELETE_PEER",
+                        {
+                            "subscription_peer_id": peer_id,
+                            "interface": peer["InterfaceName"],
+                            "public_key": peer["ClientPublicKey"],
+                            "address": values.get("Address", peer["Address"]),
+                        },
+                        subscription_id=peer["SubscriptionID"],
+                        subscription_peer_id=peer_id,
+                        idempotency_key=(
+                            f"topology:post-mutation-delete:{peer_id}:{uuid.uuid4()}"
+                        ),
+                    )
+
+            if job["Operation"] == "DELETE_PEER":
+                self._finalize_node_revocation(conn, node_id, now)
+
             subscription = conn.execute(
                 self.subscriptions.select().where(
                     self.subscriptions.c.SubscriptionID == peer["SubscriptionID"]
                 )
             ).mappings().fetchone()
             corrective_operation = None
-            if (job["Operation"] in {"CREATE_PEER", "ENABLE_PEER"}
+            if (not removal_requested
+                    and job["Operation"] in {"CREATE_PEER", "ENABLE_PEER"}
                     and subscription and subscription["Status"] != "active"):
                 corrective_operation = "DISABLE_PEER"
             elif (job["Operation"] == "DISABLE_PEER" and subscription

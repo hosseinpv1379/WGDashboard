@@ -53,7 +53,7 @@ const updateGroup = async (group) => {
     targets: targetsFromKeys(group.TargetKeys),
     status: group.Status,
   }, (response) => {
-    if (response.status) dashboardStore.newMessage('Node Groups', 'Node group updated', 'success')
+    if (response.status) dashboardStore.newMessage('Node Groups', 'Node group updated; existing subscriptions are syncing', 'success')
   })
   await load()
 }
@@ -64,7 +64,7 @@ onMounted(load)
 <template>
   <div>
     <div class="alert alert-info rounded-3">
-      A node group defines the locations delivered by a package. For example, add Germany and Finland to one group to sell a two-location package.
+      A node group defines the locations delivered by a package. Adding or removing an interface automatically updates every existing subscription sold from this group.
     </div>
 
     <div class="card rounded-3 mb-4">

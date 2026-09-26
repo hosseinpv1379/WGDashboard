@@ -38,7 +38,7 @@ const updatePackage = async (item) => {
     node_group_id: item.NodeGroupID,
     status: item.Status,
   }, (response) => {
-    if (response.status) dashboardStore.newMessage('Packages', 'Package updated', 'success')
+    if (response.status) dashboardStore.newMessage('Packages', 'Package updated; existing subscriptions are syncing if the node group changed', 'success')
   })
   await load()
 }

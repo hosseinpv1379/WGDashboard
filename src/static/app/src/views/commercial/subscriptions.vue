@@ -1,5 +1,5 @@
 <script setup>
-import {computed, onMounted, reactive, ref} from 'vue'
+import {computed, onBeforeUnmount, onMounted, reactive, ref} from 'vue'
 import {fetchGet, fetchPost} from '@/utilities/fetch.js'
 import {DashboardConfigurationStore} from '@/stores/DashboardConfigurationStore.js'
 
@@ -13,22 +13,26 @@ const loading = ref(false)
 const selectedNodes = reactive({})
 const edits = reactive({})
 const form = reactive({client_id: '', package_id: '', name: ''})
+let usageRefreshTimer = null
 
 const selectedPackage = computed(() => packages.value.find((item) => item.PackageID === form.package_id))
 const localDateTime = (value) => value ? String(value).replace(' ', 'T').slice(0, 16) : ''
 const money = (value) => new Intl.NumberFormat().format(Number(value || 0))
+const usage = (value) => {
+  const bytes = Math.max(0, Number(value || 0))
+  const gib = bytes / 1073741824
+  if (gib < 1) return `${(bytes / 1000000).toFixed(1)} MB (${gib.toFixed(4)} GiB)`
+  return `${gib.toFixed(4)} GiB`
+}
 const clientLabel = (clientID) => {
   const client = clients.value.find((item) => item.ClientID === clientID)
   return client ? `${client.Name || client.Email} — ${client.Email}` : clientID
 }
 
-const load = async () => {
-  loading.value = true
-  await fetchGet('/api/commercial/packages', {active_only: true}, (response) => { packages.value = response.data || [] })
-  await fetchGet('/api/clients/allClientsRaw', {}, (response) => { clients.value = response.data || [] })
-  await fetchGet('/api/commercial/nodes', {}, (response) => { nodes.value = response.data || [] })
+const loadSubscriptions = async (syncEdits = true) => {
   await fetchGet('/api/commercial/subscriptions', {}, (response) => {
     subscriptions.value = response.data || []
+    if (!syncEdits) return
     subscriptions.value.forEach((subscription) => {
       edits[subscription.SubscriptionID] = {
         name: subscription.Name,
@@ -40,7 +44,24 @@ const load = async () => {
       if (!selectedNodes[subscription.SubscriptionID]) selectedNodes[subscription.SubscriptionID] = []
     })
   })
+}
+
+const load = async () => {
+  loading.value = true
+  await fetchGet('/api/commercial/packages', {active_only: true}, (response) => { packages.value = response.data || [] })
+  await fetchGet('/api/clients/allClientsRaw', {}, (response) => { clients.value = response.data || [] })
+  await fetchGet('/api/commercial/nodes', {}, (response) => { nodes.value = response.data || [] })
+  await loadSubscriptions()
   loading.value = false
+}
+
+const refreshUsage = async () => {
+  if (loading.value || document.visibilityState !== 'visible') return
+  await loadSubscriptions(false)
+}
+
+const refreshWhenVisible = () => {
+  if (document.visibilityState === 'visible') refreshUsage()
 }
 
 const createSubscription = async () => {
@@ -98,7 +119,16 @@ const copy = async (value) => {
   dashboardStore.newMessage('Subscriptions', 'Copied', 'success')
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  usageRefreshTimer = window.setInterval(refreshUsage, 10000)
+  document.addEventListener('visibilitychange', refreshWhenVisible)
+})
+
+onBeforeUnmount(() => {
+  window.clearInterval(usageRefreshTimer)
+  document.removeEventListener('visibilitychange', refreshWhenVisible)
+})
 </script>
 
 <template>
@@ -174,7 +204,7 @@ onMounted(load)
               <thead><tr><th>Node</th><th>Interface</th><th>Location</th><th>Address</th><th>Status</th><th>Usage</th><th></th></tr></thead>
               <tbody>
                 <tr v-for="peer in subscription.Peers" :key="peer.SubscriptionPeerID">
-                  <td>{{ peer.NodeName }}</td><td><code>{{ peer.InterfaceName }}</code></td><td>{{ peer.NodeRegion || '—' }}</td><td><code>{{ peer.Address || 'pending' }}</code></td><td>{{ peer.Status }}</td><td>{{ (peer.UsedBytes / 1073741824).toFixed(4) }} GiB</td>
+                  <td>{{ peer.NodeName }}</td><td><code>{{ peer.InterfaceName }}</code></td><td>{{ peer.NodeRegion || '—' }}</td><td><code>{{ peer.Address || 'pending' }}</code></td><td>{{ peer.Status }}</td><td><span>{{ usage(peer.UsedBytes) }}</span><small v-if="peer.UpdatedAt" class="d-block text-muted">Updated {{ peer.UpdatedAt }}</small></td>
                   <td class="text-end"><button v-if="peer.Status === 'active'" class="btn btn-sm btn-outline-warning" @click="peerAction(peer.SubscriptionPeerID, 'DISABLE_PEER')">Disable</button><button v-if="peer.Status === 'disabled'" class="btn btn-sm btn-outline-success" @click="peerAction(peer.SubscriptionPeerID, 'ENABLE_PEER')">Enable</button><button v-if="peer.Status === 'error'" class="btn btn-sm btn-outline-primary" @click="peerAction(peer.SubscriptionPeerID, 'CREATE_PEER')">Retry</button><button class="btn btn-sm btn-outline-danger ms-1" @click="peerAction(peer.SubscriptionPeerID, 'DELETE_PEER')">Delete</button></td>
                 </tr>
                 <tr v-if="!subscription.Peers.length"><td colspan="7" class="text-center text-muted py-3">No configurations</td></tr>

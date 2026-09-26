@@ -48,6 +48,12 @@ The local interface is managed automatically; each remote server runs the Go
 agent from `wg-node/`. Outbounds route a selected client pool through an upstream
 WireGuard configuration without replacing the server's main default route.
 
+Node-group topology is live for sold subscriptions. Adding a target provisions
+it for every subscription using that group; removing a target immediately
+removes it from subscription delivery and queues peer cleanup. Moving a package
+to another group migrates subscriptions sold from that package. Removing a node
+drains its peers before its agent token is finally revoked.
+
 Private client keys are encrypted with a Fernet key stored at
 `/data/subscription.key`. This file is inside the persistent `dashboard_data`
 volume and must be included in backups. It can also be supplied explicitly with

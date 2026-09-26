@@ -25,9 +25,9 @@ const createNode = async () => {
 }
 
 const revokeNode = async (node) => {
-  if (!window.confirm(`Revoke ${node.Name}? Existing traffic jobs will no longer be delivered.`)) return
+  if (!window.confirm(`Remove ${node.Name}? It will be removed from node groups and subscriptions. The agent will clean up its peers before access is revoked.`)) return
   await fetchPost(`/api/commercial/nodes/${node.NodeID}/revoke`, {}, (response) => {
-    if (response.status) dashboardStore.newMessage('Nodes', 'Node revoked', 'warning')
+    if (response.status) dashboardStore.newMessage('Nodes', 'Node removal started; subscriptions were updated immediately', 'warning')
   })
   await load()
 }
@@ -71,7 +71,7 @@ onMounted(load)
             <tr v-for="node in nodes" :key="node.NodeID">
               <td><strong>{{ node.Name }}</strong><br><code class="small">{{ node.NodeID }}</code></td>
               <td>{{ node.Region || '—' }}</td>
-              <td><span class="badge" :class="node.Status === 'online' ? 'text-bg-success' : 'text-bg-secondary'">{{ node.Status }}</span></td>
+              <td><span class="badge" :class="node.Status === 'online' ? 'text-bg-success' : node.Status === 'revoking' ? 'text-bg-warning' : 'text-bg-secondary'">{{ node.Status }}</span></td>
               <td>
                 <div v-for="item in node.Interfaces" :key="item.InterfaceName" class="mb-1">
                   <code>{{ item.InterfaceName }}</code>
@@ -81,7 +81,7 @@ onMounted(load)
               </td>
               <td>{{ node.Capacity || 'Unlimited' }}</td>
               <td>{{ node.LastSeenAt || 'Never' }}</td>
-              <td class="text-end"><button class="btn btn-sm btn-outline-danger" @click="revokeNode(node)">Revoke</button></td>
+              <td class="text-end"><button class="btn btn-sm btn-outline-danger" @click="revokeNode(node)">{{ node.Status === 'revoking' ? 'Retry removal' : 'Remove' }}</button></td>
             </tr>
             <tr v-if="!nodes.length"><td colspan="7" class="text-center text-muted py-4">No nodes registered</td></tr>
           </tbody>
