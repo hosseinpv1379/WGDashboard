@@ -18,6 +18,11 @@
 ## فهرست
 
 - [شروع سریع برای تازه‌کارها](#شروع-سریع-برای-تازه‌کارها)
+  - [نصب پنل](#۱-نصب-پنل)
+  - [نصب نود](#۲-نصب-نود-اختیاری)
+  - [آپدیت پنل](#۳-آپدیت-پنل)
+  - [آپدیت نود](#۴-آپدیت-نود)
+  - [انتشار نسخهٔ جدید ایمیج (برای توسعه‌دهنده پروژه)](#۵-انتشار-نسخهٔ-جدید-ایمیج-برای-توسعهدهنده-پروژه)
 - [معماری ساده](#معماری-ساده)
 - [انتخاب مسیر نصب](#انتخاب-مسیر-نصب)
 - [ارتقای نصب فعلی بدون حذف اطلاعات](#ارتقای-نصب-فعلی-بدون-حذف-اطلاعات)
@@ -35,31 +40,25 @@
 
 ## شروع سریع برای تازه‌کارها
 
-اگر برای اولین‌بار با Docker و لینوکس کار می‌کنید و فقط می‌خواهید هرچه سریع‌تر
-یک پنل WGDashboard راه‌اندازی کنید، همین بخش کافی است. برای کارهای پیشرفته‌تر
-(بکاپ، ارتقا، Outbound، چند Interface و...) بعداً به بخش‌های دیگر همین فایل
-مراجعه کنید.
+اگر برای اولین‌بار با Docker و لینوکس کار می‌کنید، همین بخش را دنبال کنید. برای
+هر کدام از این چهار کار (نصب پنل، نصب نود، آپدیت پنل، آپدیت نود) یک زیربخش
+جدا و کوتاه در نظر گرفته شده تا هر وقت لازم شد فقط همان قسمت را باز کنید. برای
+کارهای پیشرفته‌تر (بکاپ، HTTPS، Outbound، چند Interface و...) به بخش‌های بعدی
+همین فایل مراجعه کنید.
 
-### چیزهایی که از قبل لازم دارید
+### پیش‌نیاز مشترک (فقط یک‌بار روی هر سرور)
 
-- یک سرور مجازی (VPS) با Ubuntu 22.04 یا 24.04 و دسترسی `root`. هر شرکت
-  هاستینگی مثل Hetzner، DigitalOcean یا آروان این را در چند دقیقه می‌سازد.
+- یک سرور مجازی (VPS) با Ubuntu 22.04 یا 24.04 و دسترسی `root`.
 - یک برنامهٔ ترمینال برای اتصال SSH؛ روی ویندوز [PuTTY](https://www.putty.org/)
   یا Windows Terminal، روی مک/لینوکس همان Terminal پیش‌فرض.
-- آی‌پی عمومی همان سرور (در پنل ارائه‌دهندهٔ سرور نمایش داده می‌شود).
 
-### مرحلهٔ ۱: وصل‌شدن به سرور
+اتصال به سرور:
 
 ```bash
 ssh root@YOUR_SERVER_IP
 ```
 
-به‌جای `YOUR_SERVER_IP` آی‌پی واقعی سرور را بگذارید و رمزی که ارائه‌دهندهٔ سرور
-داده را وارد کنید.
-
-### مرحلهٔ ۲: نصب Docker
-
-این بلوک را همان‌طور که هست کپی و در ترمینال Paste کنید:
+نصب Docker (این بلوک را همان‌طور که هست کپی و در ترمینال Paste کنید):
 
 ```bash
 sudo apt update && sudo apt install -y ca-certificates curl git
@@ -83,7 +82,7 @@ sudo apt install -y docker-ce docker-ce-cli containerd.io \
 sudo systemctl enable --now docker
 ```
 
-### مرحلهٔ ۳: دانلود پروژه
+دانلود پروژه:
 
 ```bash
 sudo git clone --branch codex/wireguard --single-branch \
@@ -91,73 +90,70 @@ sudo git clone --branch codex/wireguard --single-branch \
 cd /opt/WGDashboard
 ```
 
-### مرحلهٔ ۴: ساخت فایل تنظیمات
+اگر پروژه از قبل روی سرور کلون شده، این مرحله را رد کنید و مستقیم به زیربخش
+موردنظر بروید.
+
+---
+
+### ۱. نصب پنل
+
+این بخش را فقط روی سروری که پنل مرکزی رویش اجرا می‌شود انجام دهید (یک‌بار).
 
 ```bash
+cd /opt/WGDashboard
 cp docker/.env.example docker/.env
 nano docker/.env
 ```
 
-فایل باز می‌شود. فقط این سه مقدار را پیدا و عوض کنید (بقیهٔ خط‌ها را دست نزنید):
+فقط این سه مقدار را پیدا و عوض کنید (بقیهٔ خط‌ها را دست نزنید):
 
 | نام مقدار در فایل | چه چیزی جایگزین کنید |
 | --- | --- |
 | `WGD_ADMIN_PASSWORD` | یک رمز قوی برای ورود به پنل |
 | `POSTGRES_PASSWORD` | یک رمز قوی دیگر، فقط برای دیتابیس |
-| `PUBLIC_IP` | همان آی‌پی سروری که با آن SSH زدید |
+| `PUBLIC_IP` | آی‌پی عمومی همین سرور |
 
-برای ساختن یک رمز تصادفی امن می‌توانید از این دستور کمک بگیرید:
+برای ساختن رمز تصادفی امن:
 
 ```bash
 openssl rand -base64 24
 ```
 
-بعد از تغییر، برای ذخیره و خروج از nano:
+ذخیره و خروج از nano: `Ctrl+O` سپس `Enter` (ذخیره)، بعد `Ctrl+X` (خروج).
 
-1. کلید `Ctrl+O` را بزنید، بعد `Enter` را بزنید (ذخیره).
-2. کلید `Ctrl+X` را بزنید (خروج).
-
-### مرحلهٔ ۵: بالا آوردن پنل
+بالا آوردن پنل:
 
 ```bash
-cd /opt/WGDashboard
 docker compose --env-file docker/.env -f docker/compose.yaml pull
 docker compose --env-file docker/.env -f docker/compose.yaml up -d
-```
-
-اولین اجرا ممکن است یکی دو دقیقه طول بکشد. با این دستور مطمئن شوید همه‌چیز
-`Up` است:
-
-```bash
 docker compose --env-file docker/.env -f docker/compose.yaml ps
 ```
 
-### مرحلهٔ ۶: ورود به پنل
-
-مرورگر را باز کنید و به این آدرس بروید:
+ورود به پنل از مرورگر:
 
 ```text
 http://YOUR_SERVER_IP:10086
 ```
 
-با یوزرنیم `admin` و همان رمزی که در `WGD_ADMIN_PASSWORD` گذاشتید وارد شوید.
-
-تبریک! پنل آماده است و همین سرور به‌طور خودکار به‌عنوان اولین سرور VPN
-(Node محلی) هم فعال شده. برای ساخت اولین کاربر و اشتراک به بخش
+با یوزرنیم `admin` و همان رمز `WGD_ADMIN_PASSWORD` وارد شوید. همین سرور
+به‌طور خودکار به‌عنوان اولین سرور VPN (Node محلی) هم فعال می‌شود. برای ساخت
+اولین کاربر و اشتراک به بخش
 [ساخت کاربر و اشتراک چندسروره](#ساخت-کاربر-و-اشتراک-چندسروره) بروید.
 
-### (اختیاری) اضافه‌کردن یک سرور دوم به‌عنوان Node
+---
 
-اگر یک سرور دیگر (مثلاً در کشور دیگر) هم دارید و می‌خواهید کاربران از آن هم
-استفاده کنند:
+### ۲. نصب نود (اختیاری)
 
-1. داخل پنل، از منوی **Nodes** روی **Add WireGuard node** بزنید، یک اسم و
-   Endpoint مثل `de1.example.com:51820` وارد کنید و **Node ID** و
-   **Node Token** نمایش‌داده‌شده را همان لحظه جایی امن یادداشت کنید؛ دوباره
-   نمایش داده نمی‌شوند.
-2. روی سرور دوم (نه سرور پنل)، مراحل ۱ تا ۳ همین بخش را دوباره تکرار کنید
-   (اتصال SSH، نصب Docker، دانلود پروژه).
-3. روی همان سرور دوم، WireGuard را نصب و یک Interface بسازید:
+این بخش را فقط روی هر سرور VPN **دیگری** (غیر از سرور پنل) انجام دهید، وقتی
+می‌خواهید یک لوکیشن جدید به مجموعه اضافه کنید.
+
+**۱) اول داخل پنل:** از منوی **Nodes** روی **Add WireGuard node** بزنید، یک
+اسم و Endpoint مثل `de1.example.com:51820` وارد کنید و **Node ID** و
+**Node Token** نمایش‌داده‌شده را همان لحظه جایی امن یادداشت کنید؛ دوباره نمایش
+داده نمی‌شوند.
+
+**۲) روی سرور جدید**، بعد از انجام «پیش‌نیاز مشترک» بالا (SSH + Docker + کلون
+پروژه)، این‌ها را اجرا کنید:
 
 ```bash
 sudo apt update && sudo apt install -y wireguard
@@ -165,10 +161,9 @@ sudo sysctl -w net.ipv4.ip_forward=1
 wg genkey | tee /root/server.key | wg pubkey
 ```
 
-فایل `/etc/wireguard/wg0.conf` را بسازید (کلید بالا را در `PrivateKey`
-جایگزین کنید؛ برای نسخهٔ کامل و امن‌تر این فایل به بخش
-[نصب wg-node روی سرور WireGuard](#نصب-wg-node-روی-سرور-wireguard) مراجعه
-کنید):
+فایل `/etc/wireguard/wg0.conf` را بسازید (کلید خروجی دستور بالا را در
+`PrivateKey` جایگزین کنید؛ نسخهٔ کامل و امن‌تر این فایل در بخش
+[نصب wg-node روی سرور WireGuard](#نصب-wg-node-روی-سرور-wireguard) هست):
 
 ```ini
 [Interface]
@@ -185,27 +180,132 @@ cp .env.example .env
 nano .env
 ```
 
-در فایل `.env` این مقدارها را از پنل و همین سرور کپی کنید:
+در فایل `.env` این مقدارها را پر کنید:
 
 ```dotenv
-WG_PANEL_URL=http://YOUR_SERVER_IP:10086
+WG_PANEL_URL=http://YOUR_PANEL_SERVER_IP:10086
 WG_NODE_ID=همان Node ID که از پنل گرفتید
 WG_NODE_TOKEN=همان Node Token که از پنل گرفتید
-WG_NODE_PUBLIC_ENDPOINT=آی‌پی-سرور-دوم:51820
+WG_NODE_PUBLIC_ENDPOINT=آی‌پی-همین-سرور-جدید:51820
 ```
 
-سپس اجرا کنید:
+اجرا:
 
 ```bash
 docker compose --env-file .env -f compose.example.yaml pull
 docker compose --env-file .env -f compose.example.yaml up -d
+docker compose --env-file .env -f compose.example.yaml ps
 ```
 
 بعد از حدود یک دقیقه، در پنل زیر بخش **Nodes** وضعیت این سرور باید سبز/آنلاین
 شود.
 
-> برای HTTPS، ثبت خودکار Nodeها با Bootstrap Token، چند Interface روی یک سرور،
-> Outbound و بکاپ‌گیری منظم، بخش‌های بعدی همین فایل را بخوانید.
+> برای HTTPS، ثبت خودکار Nodeها با Bootstrap Token و چند Interface روی یک
+> سرور، به بخش [نصب `wg-node` روی سرور WireGuard](#نصب-wg-node-روی-سرور-wireguard)
+> مراجعه کنید.
+
+---
+
+### ۳. آپدیت پنل
+
+هر وقت نسخهٔ جدیدی از پنل منتشر شد (بخش بعدی همین فایل توضیح می‌دهد چه‌طور)،
+روی سرور پنل همین سه فرمان را بزنید — نیازی به `down` یا حذف چیزی نیست و
+اطلاعات کاربران و دیتابیس دست‌نخورده می‌ماند:
+
+```bash
+cd /opt/WGDashboard
+git pull --ff-only origin codex/wireguard
+docker compose --env-file docker/.env -f docker/compose.yaml pull
+docker compose --env-file docker/.env -f docker/compose.yaml up -d --remove-orphans
+```
+
+بررسی نتیجه:
+
+```bash
+docker compose --env-file docker/.env -f docker/compose.yaml ps
+docker compose --env-file docker/.env -f docker/compose.yaml logs --tail=100 wgdashboard
+```
+
+> قبل از هر آپدیت مهم، یک بکاپ بگیرید؛ روش کامل در بخش
+> [بکاپ، به‌روزرسانی و بازگردانی](#بکاپ-بهروزرسانی-و-بازگردانی) توضیح داده شده.
+
+---
+
+### ۴. آپدیت نود
+
+روی هر سرور Node (شامل خود سرور پنل، چون یک `wg-node-local` هم آنجا اجرا
+می‌شود) این فرمان‌ها را بزنید:
+
+**اگر سرور پنل است** (Node داخلی):
+
+```bash
+cd /opt/WGDashboard
+git pull --ff-only origin codex/wireguard
+docker compose --env-file docker/.env -f docker/compose.yaml pull wg-node-local
+docker compose --env-file docker/.env -f docker/compose.yaml up -d wg-node-local
+```
+
+**اگر یک سرور Node مجزا است** (طبق بخش «نصب نود» بالا):
+
+```bash
+cd /opt/WGDashboard
+git pull --ff-only origin codex/wireguard
+cd wg-node
+docker compose --env-file .env -f compose.example.yaml pull
+docker compose --env-file .env -f compose.example.yaml up -d
+docker compose --env-file .env -f compose.example.yaml logs --tail=100 wg-node
+```
+
+---
+
+### ۵. انتشار نسخهٔ جدید ایمیج (برای توسعه‌دهنده پروژه)
+
+این بخش برای خود شماست، نه برای کاربر نهایی سرور: هر بار که کد پروژه (فرانت‌اند،
+بک‌اند پنل یا `wg-node`) تغییر کرد، باید یک ایمیج Docker جدید ساخته و منتشر شود
+تا مراحل «آپدیت پنل» و «آپدیت نود» بالا چیزی برای Pull کردن داشته باشند.
+
+**۱) تغییرات را به شاخهٔ `main` برسانید و Push کنید:**
+
+```bash
+git checkout main
+git pull origin main
+git merge codex/wireguard
+git push origin main
+```
+
+**۲) صبر کنید GitHub Actions ایمیج را بسازد.** Push به `main` به‌صورت خودکار
+Workflow زیر را اجرا می‌کند:
+
+```text
+https://github.com/hosseinpv1379/WGDashboard/actions/workflows/docker.yml
+```
+
+اگر به هر دلیل خودکار اجرا نشد، همان صفحه را باز کنید، برنچ `main` را انتخاب و
+دکمهٔ **Run workflow** را بزنید. این Workflow هر دو ایمیج را می‌سازد:
+
+```text
+ghcr.io/hosseinpv1379/wgdashboard:latest
+ghcr.io/hosseinpv1379/wg-node:latest
+```
+
+**۳) فقط بار اول، Package را Public کنید** تا سرورها بدون Login بتوانند Pull
+کنند: در صفحهٔ
+[Packages گیت‌هاب](https://github.com/hosseinpv1379?tab=packages) روی هرکدام
+از `wgdashboard` و `wg-node` بروید → Package settings → Change visibility →
+Public. اگر ترجیح می‌دهید Package خصوصی بماند، به‌جایش روی هر سرور یک‌بار این
+را بزنید (نیاز به [Personal Access Token](https://github.com/settings/tokens)
+با مجوز `read:packages`):
+
+```bash
+docker login ghcr.io -u hosseinpv1379
+```
+
+**۴) حالا سرورها را آپدیت کنید:** برو سراغ بخش‌های
+[آپدیت پنل](#۳-آپدیت-پنل) و [آپدیت نود](#۴-آپدیت-نود) بالا؛ دستور `pull` در
+همان‌جا همین ایمیج تازه را دانلود می‌کند.
+
+جزئیات بیشتر دربارهٔ خود Workflow در بخش
+[انتشار ایمیج‌های اختصاصی](#انتشار-ایمیجهای-اختصاصی) هست.
 
 ---
 
